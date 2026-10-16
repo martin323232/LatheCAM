@@ -62,6 +62,10 @@ class SetupProxy:
                         translate("Lathe", "Emit N line numbers")).LineNumbers = False
         obj.addProperty("App::PropertyBool", "ToolChange", "Post",
                         translate("Lathe", "Emit T/M6 tool changes")).ToolChange = True
+        obj.addProperty("App::PropertyPlacement", "ViewPlacement", "View",
+                        translate("Lathe", "Placement of visualization/simulation "
+                                  "objects in the model (lathe Z = spindle axis)")
+                        ).ViewPlacement = FreeCAD.Placement()
         obj.Proxy = self
 
     def to_stock(self) -> Stock:

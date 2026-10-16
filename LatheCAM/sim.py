@@ -14,7 +14,7 @@ import FreeCAD as App
 import Part
 from FreeCAD import Vector
 
-from .vis import motions_for_document
+from .vis import motions_for_document, view_placement
 
 SIM_PREFIX = "Sim_"
 _ANIM = {}  # keeps timer + state alive between calls
@@ -84,6 +84,7 @@ def simulate(doc, group_name="Simulation"):
     obj = doc.addObject("Part::Feature", SIM_PREFIX + "part")
     obj.Label = "Simulated result"
     obj.Shape = solid
+    obj.Placement = view_placement(doc)
     obj.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "sim"
     vo = getattr(obj, "ViewObject", None)
     if vo is not None:
@@ -142,6 +143,7 @@ def animate(doc, duration=12.0, step_ms=30):
     marker = doc.addObject("Part::Feature", SIM_PREFIX + "tool")
     marker.Label = "Simulated tool"
     marker.Shape = Part.Compound([tip, arm])
+    vp = view_placement(doc)
     marker.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "sim"
     vo = getattr(marker, "ViewObject", None)
     if vo is not None:
@@ -165,7 +167,8 @@ def animate(doc, duration=12.0, step_ms=30):
     _ANIM["doc"] = doc
 
     def place(x, z):
-        marker.Placement = App.Placement(Vector(x, 0.0, z), App.Rotation())
+        marker.Placement = vp.multiply(
+            App.Placement(Vector(x, 0.0, z), App.Rotation()))
 
     def tick():
         state["t"] += step_ms / 1000.0

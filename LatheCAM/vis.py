@@ -41,6 +41,15 @@ def motions_for_document(doc):
     return stock, out
 
 
+def view_placement(doc):
+    """Setup's ViewPlacement (identity when absent) — aligns vis/sim output
+    with the model: lathe coords have Z = spindle axis, Z0 at the face."""
+    setup, _ops = collect_program(doc)
+    if setup is not None and hasattr(setup, "ViewPlacement"):
+        return setup.ViewPlacement
+    return App.Placement()
+
+
 def _edge(x0, z0, x1, z1):
     return Part.makeLine(Vector(x0 / 2.0, 0.0, z0), Vector(x1 / 2.0, 0.0, z1))
 
@@ -64,6 +73,7 @@ def motions_to_edges(per_op):
 def visualize(doc, group_name="Toolpath"):
     """Create/replace colored toolpath objects (+ translucent stock). Returns objects."""
     stock, per_op = motions_for_document(doc)
+    vp = view_placement(doc)
 
     # remove previous visualization objects (group + features share the Vis_ prefix)
     for o in list(doc.Objects):
@@ -91,6 +101,7 @@ def visualize(doc, group_name="Toolpath"):
             doc.removeObject(name)
         obj = doc.addObject("Part::Feature", name)
         obj.Shape = Part.Compound(segs)
+        obj.Placement = vp
         obj.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "vis"
         style(obj, *STYLE[kind])
         created.append(obj)
@@ -103,6 +114,7 @@ def visualize(doc, group_name="Toolpath"):
                             Vector(0, 0, -stock.length), Vector(0, 0, 1))
     so = doc.addObject("Part::Feature", "Vis_stock")
     so.Shape = cyl
+    so.Placement = vp
     so.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "vis"
     vo = getattr(so, "ViewObject", None)
     if vo is not None:
