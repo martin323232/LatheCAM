@@ -7,6 +7,7 @@ import FreeCAD
 import FreeCADGui as Gui
 
 from . import objects
+from . import vis
 from .program import post_document
 from .model import OP_TYPES
 
@@ -89,6 +90,29 @@ class CmdPost:
                 None, "LatheCAM", f"Wrote {n} lines to\n{path}")
         except Exception as e:  # noqa: BLE001 - show any post error
             QtWidgets.QMessageBox.critical(None, "LatheCAM post failed", str(e))
+
+
+class CmdVisualize:
+    def GetResources(self):
+        return {"MenuText": "Show toolpaths",
+                "ToolTip": "Draw rapid/feed/thread toolpaths and stock in the 3D view",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        doc = Gui.ActiveDocument.Document
+        try:
+            vis.visualize(doc)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(None, "LatheCAM visualize failed", str(e))
+            return
+        try:
+            Gui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
 
 
 def make_op_command(op_type):

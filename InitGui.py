@@ -28,6 +28,8 @@ class LatheCAMWorkbench(Gui.Workbench):
             cmds.append(name)
         cmds.append("CmdLathePost")
         Gui.addCommand("CmdLathePost", gui.CmdPost())
+        cmds.append("CmdLatheVis")
+        Gui.addCommand("CmdLatheVis", gui.CmdVisualize())
         self.appendToolbar("LatheCAM", cmds)
         self.appendMenu("LatheCAM", cmds)
 
