@@ -49,12 +49,21 @@ class MassoPost:
             emit(self.safe_start)
 
         last = len(blocks) - 1
+        first_tc = True
         for bi, b in enumerate(blocks):
             emit(f"({b.comment})")
             has_thread = any(mo.kind == "thread" for mo in b.moves)
             if self.tool_change and b.tool_number:
+                if not first_tc:
+                    # R2: never change tools with spindle/coolant running
+                    if self.coolant:
+                        emit("M09")
+                    emit("M05")
                 emit(f"T{b.tool_number:02d} M06")
-                emit("M01")  # optional stop so the operator confirms the tool
+                tname = getattr(b, "tool_name", "") or ""
+                label = f"LOAD T{b.tool_number:02d}" + (f" {tname}" if tname else "")
+                emit(f"M00 ({label})")  # full stop: operator confirms the tool
+                first_tc = False
             if b.rpm:
                 # K6: G32 threading must run G97 + G95 (feed in mm/rev,
                 # fixed rpm) regardless of the CSS setting, or the pitch
@@ -97,12 +106,13 @@ class Block:
 
     def __init__(self, comment: str, tool_number: int, rpm: float,
                  moves: List[Motion], rpm_ceiling: float = 3000.0,
-                 surface_speed: float = 0.0):
+                 surface_speed: float = 0.0, tool_name: str = ""):
         self.comment = comment
         self.tool_number = tool_number
         self.rpm = rpm
         self.rpm_ceiling = rpm_ceiling
         self.surface_speed = surface_speed
+        self.tool_name = tool_name
         self.moves = moves
 
 

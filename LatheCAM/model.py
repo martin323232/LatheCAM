@@ -38,16 +38,26 @@ class Tool:
     rpm: float = 800.0
     feed: float = 0.15
     thread_pitch: float = 0.0       # for thread tools (mm)
+    # where the machine tool offset is measured for groove/part tools:
+    # left = chuck-side corner, right = face-side corner, centre = middle.
+    # The op Z is the nominal cut CENTRE; the programmed Z is shifted so the
+    # kerf stays centred there given this corner.
+    z_reference: str = "left"
 
     @staticmethod
     def default_library() -> List["Tool"]:
         return [
-            Tool("OD-rough", 1, "turn", rpm=800, feed=0.20),
-            Tool("OD-finish", 2, "turn", nose_radius=0.8, rpm=1200, feed=0.10),
-            Tool("Bore", 3, "bore", width=4.0, max_depth=25.0, rpm=700, feed=0.12),
-            Tool("Groove 3mm", 4, "groove", width=3.0, max_depth=5.0, rpm=500, feed=0.06),
-            Tool("Part 2mm", 5, "part", width=2.0, max_depth=20.0, rpm=400, feed=0.05),
-            Tool("Thread 60deg", 6, "thread", width=1.6, rpm=250, feed=0.0, thread_pitch=2.0),
+            Tool("OD-rough", 1, "turn", rpm=800, feed=0.20, z_reference="centre"),
+            Tool("OD-finish", 2, "turn", nose_radius=0.8, rpm=1200, feed=0.10,
+                 z_reference="centre"),
+            Tool("Bore", 3, "bore", width=4.0, max_depth=25.0, rpm=700, feed=0.12,
+                 z_reference="centre"),
+            Tool("Groove 3mm", 4, "groove", width=3.0, max_depth=5.0, rpm=500,
+                 feed=0.06, z_reference="left"),
+            Tool("Part 2mm", 5, "part", width=2.0, max_depth=20.0, rpm=400,
+                 feed=0.05, z_reference="left"),
+            Tool("Thread 60deg", 6, "thread", width=1.6, rpm=250, feed=0.0,
+                 thread_pitch=2.0, z_reference="centre"),
         ]
 
 
@@ -81,6 +91,13 @@ class Op:
     thread_length: float = 20.0
     thread_lead_in: Optional[float] = None  # None = 3x pitch
     thread_spring_pass: bool = True
+    # deepest Z the thread may reach (shoulder / undercut position); None = only
+    # the stock length limits it
+    thread_z_limit: Optional[float] = None
+
+    # boring: False (default) = cut toward the chuck (-Z, standard boring bar);
+    # True = back-boring, cut toward the face (+Z)
+    bore_back_cut: bool = False
 
     # od_finish profile: list of (diameter, z) points from start to end.
     # Empty = simple cylinder from target_diameter at z_start to z_end.
@@ -113,6 +130,12 @@ class Op:
                     f"thread: lead-out ends at Z{z_end:.1f}, beyond stock "
                     f"length {stock.length:.1f} — shorten thread_length or "
                     "move z_start toward the face")
+            if (self.thread_z_limit is not None
+                    and z_end < self.thread_z_limit - 1e-9):
+                raise ValueError(
+                    f"thread: lead-out ends at Z{z_end:.1f}, past the shoulder/"
+                    f"undercut at Z{self.thread_z_limit:.1f} — shorten "
+                    "thread_length or move z_start toward the face")
 
 
 def thread_depth(pitch: float) -> float:

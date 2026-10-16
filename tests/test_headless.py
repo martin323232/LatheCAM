@@ -4,7 +4,10 @@ Simulates an installed addon: Mod/LatheCAM on MOD_PATH, build a document
 with Setup + Ops via the object proxies, post to file, verify G-code.
 """
 
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import FreeCAD
 
@@ -18,8 +21,6 @@ def check(name, cond, detail=""):
 
 
 # import as an installed addon would
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from LatheCAM import objects
 from LatheCAM.program import post_document, load_tools
 

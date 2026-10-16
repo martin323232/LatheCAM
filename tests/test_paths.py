@@ -171,12 +171,113 @@ def test_post_dialect():
     check("thread block forces G95 under CSS", "G95" in seg and "G94" not in seg)
 
 
+def test_review_round2():
+    """v0.1.8 review fixes R1-R7 — each check fails on 0.1.6."""
+    tl = tools()
+
+    # R1: od_rough mid-length start must never cut the collar in (z_start, 0]
+    stock = Stock(diameter=30.0, length=60.0)
+    mv = generate(Op("od_rough", "OD-rough", "r", z_start=-10.0, z_end=-30.0,
+                     target_diameter=20.0, depth_per_pass=2.0, stock_to_leave=0.5),
+                  tl["OD-rough"], stock)
+    bad = [mo for mo in mv
+           if mo.kind == "feed" and -10.0 < mo.z <= 0.0 and mo.x < 30.0 - 1e-9]
+    check("R1: no feed inside collar zone (z_start, 0]", not bad, str(bad[:2]))
+
+    # R2: tool change stops spindle + coolant, uses M00 with tool name
+    mv1 = generate(Op("od_finish", "OD-finish", "f", z_end=-20.0,
+                      target_diameter=20.0), tl["OD-finish"], stock)
+    mv2 = generate(Op("part", "Part 2mm", "p", z_start=-45.0, peck=0.5),
+                   tl["Part 2mm"], stock)
+    b1 = Block("(op1)", 2, 1200, mv1, tool_name="OD-finish")
+    b2 = Block("(op2)", 5, 400, mv2, tool_name="Part 2mm")
+    g = post_program([b1, b2], tool_change=True)
+    lines = g.splitlines()
+    i_m03 = [i for i, l in enumerate(lines) if l == "M03"][1]   # op2 spindle on
+    seg = lines[:i_m03]
+    i_m09 = max(i for i, l in enumerate(seg) if l == "M09")
+    i_m05 = max(i for i, l in enumerate(seg) if l == "M05")
+    i_t = max(i for i, l in enumerate(seg) if l.startswith("T05 M06"))
+    i_m00 = max(i for i, l in enumerate(seg) if l.startswith("M00"))
+    check("R2: M09 -> M05 -> T05 M06 -> M00 -> M03 order",
+          i_m09 < i_m05 < i_t < i_m00 < i_m03,
+          f"{i_m09},{i_m05},{i_t},{i_m00},{i_m03}")
+    check("R2: M00 names the tool", "M00 (LOAD T05 Part 2mm)" in g)
+    check("R2: no M01 anywhere", "M01" not in g)
+
+    # R3: wide groove (multi-centre) rapids straight out between centres
+    mv = generate(Op("groove", "Groove 3mm", "g", z_start=-10.0, z_end=-19.0,
+                     groove_diameter=24.0, peck=0.5), tl["Groove 3mm"], stock)
+    probs = check_collisions(mv, stock, tool_width=3.0, z_reference="left")
+    check("R3: wide groove collision-free", not probs, str(probs[:2]))
+
+    # R4: width-aware checker catches kerf-edge overlap the point model misses
+    stock25 = Stock(diameter=25.0, length=45.0)
+    base = [Motion("rapid", 34, 2),
+            Motion("rapid", 27, -12),
+            Motion("feed", 16, -12, 0.06, "groove plunge"),
+            Motion("rapid", 27, -12, 0, "peck retract")]
+    mv = base + [Motion("rapid", 20, -9.2, 0, "centre in air, edge in wall")]
+    check("R4: width model catches kerf-edge hit",
+          bool(check_collisions(mv, stock25, tool_width=3.0, z_reference="left")))
+    mv = base + [Motion("rapid", 20, -12.0, 0, "span = exactly the kerf")]
+    check("R4: width model clears rapid fully inside kerf",
+          not check_collisions(mv, stock25, tool_width=3.0, z_reference="left"))
+
+    # R5: boring cuts toward the chuck (-Z), no diagonal feeds
+    stock_b = Stock(diameter=30.0, length=40.0, bore_diameter=10.0)
+    for op_type in ("id_rough", "id_finish"):
+        mv = generate(Op(op_type, "Bore", "b", z_start=0.0, z_end=-20.0,
+                         target_diameter=20.0, depth_per_pass=2.0,
+                         stock_to_leave=0.3), tl["Bore"], stock_b)
+        prev, dz_pos, diag = None, [], []
+        for mo in mv:
+            if mo.kind == "feed" and prev is not None:
+                dz, dx = mo.z - prev[1], mo.x - prev[0]
+                if dz > 1e-9:
+                    dz_pos.append(mo)
+                if abs(dz) > 1e-9 and abs(dx) > 1e-9:
+                    diag.append(mo)
+            prev = (mo.x, mo.z)
+        check(f"R5: {op_type} cuts -Z only", not dz_pos, str(dz_pos[:2]))
+        check(f"R5: {op_type} no diagonal feeds", not diag, str(diag[:2]))
+
+    # R6: groove/part programmed Z offset for the left (chuck-side) corner
+    mv = generate(Op("groove", "Groove 3mm", "g", z_start=-25.0, z_end=-25.0,
+                     groove_diameter=16.0, peck=0.5), tl["Groove 3mm"], stock)
+    zs = {round(mo.z, 3) for mo in mv if mo.kind == "feed"}
+    check("R6: groove Z = centre - w/2 (left ref)", zs == {-26.5}, str(zs))
+    mv = generate(Op("part", "Part 2mm", "p", z_start=-45.0, peck=0.5),
+                  tl["Part 2mm"], stock)
+    zs = {round(mo.z, 3) for mo in mv if mo.kind == "feed"}
+    check("R6: part kerf centred on op Z (left ref)", zs == {-46.0}, str(zs))
+
+    # R7: thread lead-out must not pass the shoulder/undercut
+    ok = Op("thread", "Thread 60deg", "t", z_start=0.0,
+            thread_major_diameter=20.0, thread_pitch=2.0, thread_length=25.0,
+            thread_z_limit=-30.0)
+    try:
+        generate(ok, tl["Thread 60deg"], stock)
+        check("R7: thread within shoulder limit passes", True)
+    except ValueError as e:
+        check("R7: thread within shoulder limit passes", False, str(e))
+    bad = Op("thread", "Thread 60deg", "t", z_start=0.0,
+             thread_major_diameter=20.0, thread_pitch=2.0, thread_length=29.0,
+             thread_z_limit=-30.0)
+    try:
+        generate(bad, tl["Thread 60deg"], stock)
+        check("R7: thread past shoulder raises", False, "no error raised")
+    except ValueError as e:
+        check("R7: thread past shoulder raises", "shoulder" in str(e), str(e))
+
+
 if __name__ == "__main__":
     test_thread_math()
     gcode = test_full_program()
     test_css_mode()
     test_collision_checker()
     test_post_dialect()
+    test_review_round2()
     print("\n--- sample gcode (first 40 lines) ---")
     print("\n".join(gcode.splitlines()[:40]))
     print(f"\n{len(FAILED)} failed" if FAILED else "\nALL TESTS PASSED")

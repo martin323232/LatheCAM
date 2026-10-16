@@ -125,6 +125,14 @@ class OpProxy:
         obj.addProperty("App::PropertyLength", "ThreadLeadIn", "Thread",
                         translate("Lathe", "thread lead-in (0 = 3x pitch)")).ThreadLeadIn = 0.0
         obj.addProperty("App::PropertyBool", "ThreadSpringPass", "Thread").ThreadSpringPass = True
+        obj.addProperty("App::PropertyDistance", "ThreadZLimit", "Thread",
+                        translate("Lathe", "deepest Z the thread may reach "
+                                  "(shoulder/undercut; 0 = only stock length "
+                                  "limits it)")).ThreadZLimit = 0.0
+        obj.addProperty("App::PropertyBool", "BoreBackCut", "Cutting",
+                        translate("Lathe", "bore ops: cut toward the face (+Z) "
+                                  "instead of toward the chuck (-Z)")
+                        ).BoreBackCut = False
         obj.Proxy = self
 
     def to_op(self) -> Op:
@@ -156,6 +164,8 @@ class OpProxy:
             thread_length=float(s.ThreadLength),
             thread_lead_in=float(getattr(s, "ThreadLeadIn", 0.0)) or None,
             thread_spring_pass=bool(s.ThreadSpringPass),
+            thread_z_limit=float(getattr(s, "ThreadZLimit", 0.0)) or None,
+            bore_back_cut=bool(getattr(s, "BoreBackCut", False)),
             profile=profile,
         )
 

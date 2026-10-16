@@ -37,8 +37,12 @@ def build_blocks(setup_obj, op_objs, tools: Dict[str, Tool]) -> List[Block]:
         rpm = op.rpm if op.rpm is not None else tool.rpm
         block = Block(f"{o.Label} [{op.type}]", tool.tool_number, rpm, moves,
                       rpm_ceiling=stock.max_rpm,
-                      surface_speed=float(getattr(setup_obj, "SurfaceSpeed", 150.0)))
+                      surface_speed=float(getattr(setup_obj, "SurfaceSpeed", 150.0)),
+                      tool_name=tool.name)
         block.op_type = op.type
+        block.tool_kind = tool.kind
+        block.tool_width = tool.width
+        block.z_reference = getattr(tool, "z_reference", "centre")
         blocks.append(block)
     return blocks
 
@@ -60,7 +64,11 @@ def post_document(doc, filename: str = None) -> str:
     stock = setup.Proxy.to_stock()
     checker = CollisionChecker(stock)
     for b in blocks:
-        checker.add(b.moves, boring=getattr(b, "op_type", "").startswith("id_"))
+        kind = getattr(b, "tool_kind", "turn")
+        # kerf width only for groove/part tools; turning stays point-sampled
+        tw = getattr(b, "tool_width", 0.0) if kind in ("groove", "part") else 0.0
+        checker.add(b.moves, boring=getattr(b, "op_type", "").startswith("id_"),
+                    tool_width=tw, z_reference=getattr(b, "z_reference", "centre"))
     if checker.problems:
         raise ValueError("rapid collision check failed:\n  " + "\n  ".join(checker.problems))
     gcode = post_program(

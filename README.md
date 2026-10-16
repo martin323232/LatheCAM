@@ -77,3 +77,37 @@ freecadcmd tests/test_headless.py      # full addon (run from the repo root)
 
 `examples/demo_program.py` builds a complete part program headless and
 writes `demo.nc`.
+
+## Changelog
+
+### 0.1.8
+
+- `od_rough` with a mid-length start (`ZStart < 0`) now plunges exactly at
+  `ZStart` — material in front of the start keeps its stock diameter.
+- Tool changes stop coolant + spindle first: `M09`, `M05`, `T.. M06`,
+  `M00 (LOAD T.. <tool>)` (was `M01`, which only stops with optional-stop on).
+- Multi-centre grooves rapid straight out in X after each centre — wide
+  grooves post collision-free.
+- Collision checker models groove/part kerf width (`z_reference` corner);
+  a rapid whose centre is in the air but whose edge overlaps material is
+  now caught.
+- Boring cuts toward the chuck (−Z) with no diagonal feeds between passes;
+  `BoreBackCut = True` restores back-boring (+Z).
+- Tool library field `z_reference` (`left` | `right` | `centre`): groove/part
+  programmed Z is offset so the kerf stays centred on the op Z for how the
+  tool was touched off (default `left` = chuck-side corner).
+- Thread op `ThreadZLimit`: posting fails if the G32 lead-out passes the
+  shoulder/undercut Z.
+- Removed committed `__pycache__`/`.pyc`; added `.gitignore`.
+
+### 0.1.7
+
+- `ViewPlacement` on the Setup object: visualization and simulation output
+  is placed through it, so alignment with the model survives re-runs.
+
+### 0.1.6
+
+- Collision-safe rapids (K1/K2) + pre-post collision checker, proxy
+  persistence, per-type tool defaults, auto op order, thread G97/G95 under
+  CSS, Z-stepped facing, groove width, thread lead-out validation,
+  G18/M05-once/coolant, license + icon + tests.
