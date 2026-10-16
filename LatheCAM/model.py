@@ -63,6 +63,7 @@ class Op:
     z_end: float = -30.0
     target_diameter: float = 20.0   # final diameter (od/id ops)
     face_diameter: float = 0.0      # face op: start diameter to face down from
+    face_depth: float = 2.0         # face op: axial mm to cut off the end
 
     # cutting params
     depth_per_pass: float = 1.5     # radial mm per roughing pass
@@ -78,6 +79,7 @@ class Op:
     thread_major_diameter: float = 20.0
     thread_pitch: float = 2.0
     thread_length: float = 20.0
+    thread_lead_in: Optional[float] = None  # None = 3x pitch
     thread_spring_pass: bool = True
 
     # od_finish profile: list of (diameter, z) points from start to end.
@@ -104,6 +106,13 @@ class Op:
                 raise ValueError("thread_pitch must be > 0")
             if self.thread_major_diameter <= 0:
                 raise ValueError("thread_major_diameter must be > 0")
+            lead_out = max(1.0 * self.thread_pitch, 1.0)
+            z_end = self.z_start - self.thread_length - lead_out
+            if z_end < -stock.length:
+                raise ValueError(
+                    f"thread: lead-out ends at Z{z_end:.1f}, beyond stock "
+                    f"length {stock.length:.1f} — shorten thread_length or "
+                    "move z_start toward the face")
 
 
 def thread_depth(pitch: float) -> float:

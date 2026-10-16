@@ -61,7 +61,7 @@ class SetupProxy:
         obj.addProperty("App::PropertyBool", "LineNumbers", "Post",
                         translate("Lathe", "Emit N line numbers")).LineNumbers = False
         obj.addProperty("App::PropertyBool", "ToolChange", "Post",
-                        translate("Lathe", "Emit T/M6 tool changes")).ToolChange = False
+                        translate("Lathe", "Emit T/M6 tool changes")).ToolChange = True
         obj.Proxy = self
 
     def to_stock(self) -> Stock:
@@ -76,6 +76,9 @@ class SetupProxy:
 
     def __setstate__(self, state):
         pass
+
+    def onDocumentRestored(self, obj):
+        self.Object = obj
 
 
 class OpProxy:
@@ -97,6 +100,8 @@ class OpProxy:
         obj.addProperty("App::PropertyDistance", "ZEnd", "Geometry").ZEnd = -30.0
         obj.addProperty("App::PropertyLength", "TargetDiameter", "Geometry").TargetDiameter = 20.0
         obj.addProperty("App::PropertyLength", "FaceDiameter", "Geometry").FaceDiameter = 0.0
+        obj.addProperty("App::PropertyLength", "FaceDepth", "Geometry",
+                        translate("Lathe", "face op: axial depth to cut off the end")).FaceDepth = 2.0
         obj.addProperty("App::PropertyLength", "GrooveDiameter", "Geometry").GrooveDiameter = 10.0
         obj.addProperty("App::PropertyLength", "DepthPerPass", "Cutting").DepthPerPass = 1.5
         obj.addProperty("App::PropertyLength", "StockToLeave", "Cutting").StockToLeave = 0.5
@@ -113,6 +118,8 @@ class OpProxy:
         obj.ProfileString = ""
         obj.addProperty("App::PropertyFloat", "ThreadPitch", "Thread").ThreadPitch = 2.0
         obj.addProperty("App::PropertyLength", "ThreadLength", "Thread").ThreadLength = 20.0
+        obj.addProperty("App::PropertyLength", "ThreadLeadIn", "Thread",
+                        translate("Lathe", "thread lead-in (0 = 3x pitch)")).ThreadLeadIn = 0.0
         obj.addProperty("App::PropertyBool", "ThreadSpringPass", "Thread").ThreadSpringPass = True
         obj.Proxy = self
 
@@ -133,6 +140,7 @@ class OpProxy:
             z_end=float(s.ZEnd),
             target_diameter=float(s.TargetDiameter),
             face_diameter=float(s.FaceDiameter),
+            face_depth=float(getattr(s, "FaceDepth", 2.0)),
             depth_per_pass=float(s.DepthPerPass),
             stock_to_leave=float(s.StockToLeave),
             feed=float(s.Feed) or None,
@@ -142,6 +150,7 @@ class OpProxy:
             thread_major_diameter=float(s.ThreadMajorDia),
             thread_pitch=float(s.ThreadPitch),
             thread_length=float(s.ThreadLength),
+            thread_lead_in=float(getattr(s, "ThreadLeadIn", 0.0)) or None,
             thread_spring_pass=bool(s.ThreadSpringPass),
             profile=profile,
         )
@@ -152,6 +161,9 @@ class OpProxy:
     def __setstate__(self, state):
         pass
 
+    def onDocumentRestored(self, obj):
+        self.Object = obj
+
 
 def create_setup(doc, name="Setup"):
     register_types()
@@ -161,11 +173,31 @@ def create_setup(doc, name="Setup"):
     return obj
 
 
+# Sensible default tool per operation type (K5): a thread op must never
+# silently inherit the roughing tool's feed/RPM.
+TOOL_FOR_OP = {
+    "face": "OD-finish",
+    "od_rough": "OD-rough",
+    "od_finish": "OD-finish",
+    "id_rough": "Bore",
+    "id_finish": "Bore",
+    "groove": "Groove 3mm",
+    "part": "Part 2mm",
+    "thread": "Thread 60deg",
+}
+
+
 def create_op(doc, op_type, name=None):
     register_types()
     obj = doc.addObject("App::FeaturePython", name or f"Op_{op_type}")
     OpProxy(obj, op_type)
     obj.Label = f"Op: {op_type}"
+    # K5: per-type tool default
+    obj.ToolName = TOOL_FOR_OP.get(op_type, "OD-rough")
+    # K3: new ops append to the program (max Order + 10), not Order=10
+    orders = [int(o.Order) for o in doc.Objects
+              if getattr(o, "LatheRole", "") == "op" and o.Name != obj.Name]
+    obj.Order = (max(orders) + 10) if orders else 10
     return obj
 
 

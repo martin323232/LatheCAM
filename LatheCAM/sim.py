@@ -152,6 +152,12 @@ def animate(doc, duration=12.0, step_ms=30):
     doc.recompute()
 
     state = {"t": 0.0, "i": 0, "acc": 0.0}
+    old = _ANIM.get("timer")
+    if old is not None:            # S5: never leave a zombie timer running
+        try:
+            old.stop()
+        except RuntimeError:
+            pass                    # underlying C++ object already deleted
     timer = QtCore_QTimer()
     _ANIM["timer"] = timer
     _ANIM["state"] = state

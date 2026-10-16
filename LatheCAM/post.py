@@ -24,11 +24,13 @@ def _fmt(v: float) -> str:
 
 class MassoPost:
     def __init__(self, css: bool = False, line_numbers: bool = False,
-                 tool_change: bool = False, safe_start: str = "G21 G90 G40 G49"):
+                 tool_change: bool = False, safe_start: str = "G21 G90 G18 G40",
+                 coolant: bool = True):
         self.css = css
         self.line_numbers = line_numbers
         self.tool_change = tool_change
         self.safe_start = safe_start
+        self.coolant = coolant
 
     def post(self, blocks: List["Block"]) -> str:
         out: List[str] = []
@@ -46,19 +48,26 @@ class MassoPost:
         if self.safe_start:
             emit(self.safe_start)
 
-        for b in blocks:
+        last = len(blocks) - 1
+        for bi, b in enumerate(blocks):
             emit(f"({b.comment})")
+            has_thread = any(mo.kind == "thread" for mo in b.moves)
             if self.tool_change and b.tool_number:
                 emit(f"T{b.tool_number:02d} M06")
+                emit("M01")  # optional stop so the operator confirms the tool
             if b.rpm:
-                if self.css:
+                # K6: G32 threading must run G97 + G95 (feed in mm/rev,
+                # fixed rpm) regardless of the CSS setting, or the pitch
+                # would be read as mm/min under G94.
+                if self.css and not has_thread:
                     emit(f"G96 D{int(b.rpm_ceiling)} S{int(b.surface_speed or 150)}")
                 else:
                     emit(f"G97 S{int(b.rpm)}")
                 emit("M03")
-            mode = "G95" if not self.css else "G94"
+                if self.coolant:
+                    emit("M08")
+            mode = "G95" if (not self.css or has_thread) else "G94"
             emit(mode)
-            cur_feed = None
             for mo in b.moves:
                 if mo.kind == "dwell":
                     emit(f"G4 P{_fmt(mo.feed)}")
@@ -71,12 +80,14 @@ class MassoPost:
                 words = [g, f"X{_fmt(mo.x)}", f"Z{_fmt(mo.z)}"]
                 if mo.kind == "feed":
                     f = mo.feed
-                    if self.css:
+                    if self.css and mode == "G94":
                         f = mo.feed * (b.rpm or 800)  # mm/rev -> mm/min approx
                     words.append(f"F{_fmt(f)}")
-                    cur_feed = f
                 emit(" ".join(words))
-            emit("M05")
+            if bi == last:
+                if self.coolant:
+                    emit("M09")
+                emit("M05")
         emit("M30")
         return "\n".join(out) + "\n"
 

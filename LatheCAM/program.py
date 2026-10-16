@@ -4,7 +4,7 @@ import os
 from typing import Dict, List
 
 from .model import Tool
-from .paths import generate
+from .paths import generate, CollisionChecker
 from .post import Block, post_program
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,14 +35,20 @@ def build_blocks(setup_obj, op_objs, tools: Dict[str, Tool]) -> List[Block]:
                              f"(available: {', '.join(sorted(tools))})")
         moves = generate(op, tool, stock)
         rpm = op.rpm if op.rpm is not None else tool.rpm
-        blocks.append(Block(f"{o.Label} [{op.type}]", tool.tool_number, rpm, moves,
-                            rpm_ceiling=stock.max_rpm,
-                            surface_speed=float(getattr(setup_obj, "SurfaceSpeed", 150.0))))
+        block = Block(f"{o.Label} [{op.type}]", tool.tool_number, rpm, moves,
+                      rpm_ceiling=stock.max_rpm,
+                      surface_speed=float(getattr(setup_obj, "SurfaceSpeed", 150.0)))
+        block.op_type = op.type
+        blocks.append(block)
     return blocks
 
 
 def post_document(doc, filename: str = None) -> str:
-    """Post the whole document. Returns gcode text; writes file if filename given."""
+    """Post the whole document. Returns gcode text; writes file if filename given.
+
+    Raises ValueError if any rapid move passes through remaining material —
+    fix the ops before posting.
+    """
     from .objects import collect_program
     setup, ops = collect_program(doc)
     if setup is None:
@@ -51,10 +57,16 @@ def post_document(doc, filename: str = None) -> str:
         raise ValueError("no Lathe::Op objects in document")
     tools = load_tools()
     blocks = build_blocks(setup, ops, tools)
+    stock = setup.Proxy.to_stock()
+    checker = CollisionChecker(stock)
+    for b in blocks:
+        checker.add(b.moves, boring=getattr(b, "op_type", "").startswith("id_"))
+    if checker.problems:
+        raise ValueError("rapid collision check failed:\n  " + "\n  ".join(checker.problems))
     gcode = post_program(
         blocks,
         header=f"LatheCAM {os.path.basename(filename or 'program')} | stock "
-               f"Ø{setup.StockDiameter} x {setup.StockLength}",
+               f"D{float(setup.StockDiameter):g} x {float(setup.StockLength):g} mm",
         css=bool(getattr(setup, "UseCSS", False)),
         line_numbers=bool(getattr(setup, "LineNumbers", False)),
         tool_change=bool(getattr(setup, "ToolChange", False)),

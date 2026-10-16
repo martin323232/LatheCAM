@@ -40,26 +40,37 @@ folder into Mod.)
 
 ## Safety
 
-This generates real machine code. **Always** simulate in Masso's G-code
-preview and dry-run with the tool away from the part before cutting. First
-cut of any new program: single block, rapid override low, hand on feed hold.
+This generates real machine code. **Every program is checked before
+posting:** LatheCAM replays the toolpath against a material model and
+refuses to post if any rapid move passes through remaining material. That
+check assists your setup — it does not replace it. **Always** simulate in
+Masso's G-code preview and dry-run with the tool away from the part before
+cutting. First cut of any new program: single block, rapid override low,
+hand on feed hold.
+
+## Built-in visualization & simulation
+
+- **Show toolpaths** — rapids (red dashed), feed cuts (green), stock
+  (translucent) drawn on the setup axis.
+- **Simulate** — computes the finished part from the toolpath (revolved
+  min-radius envelope) and animates the tool along the program.
+
+Both are approximations for sanity-checking; the authoritative verification
+stays Masso's preview.
 
 ## Limitations (v0.1)
 
 - Straight external threads only (no taper, no internal threading).
 - `od_finish` profile = polyline of (diameter, Z) points set via script or
-  property edit; no sketch-edge picking yet.
-- No toolpath simulation/verification view — use Masso's preview or
-  `ncviewer`.
-- No cutter-compensation / nose-radius compensation output.
+  the `ProfileString` property (`"D,Z; D,Z; ..."`); no sketch-edge picking yet.
+- Simulation is tool-centerline based: no insert nose-radius or
+  insert-shape cutting, no cutter-compensation output.
 
 ## Tests
 
 ```
-python3 tests/test_paths.py            # pure-python core
-freecadcmd tests/test_headless.py      # full addon in FreeCAD 1.1.3
-freecadcmd tests/test_gui_sim.py       # workbench + commands, real exec semantics
-freecadcmd tests/test_gui_sim.py      # workbench+commands, real exec semantics
+python3 tests/test_paths.py            # pure-python core, no FreeCAD needed
+freecadcmd tests/test_headless.py      # full addon (run from the repo root)
 ```
 
 ## Example
