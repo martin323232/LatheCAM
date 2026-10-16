@@ -1,0 +1,8 @@
+[
+  {"name": "OD-rough",   "tool_number": 1, "kind": "turn",   "width": 3.0, "nose_radius": 0.4, "max_depth": 20.0, "rpm": 800.0,  "feed": 0.20, "thread_pitch": 0.0},
+  {"name": "OD-finish",  "tool_number": 2, "kind": "turn",   "width": 3.0, "nose_radius": 0.8, "max_depth": 20.0, "rpm": 1200.0, "feed": 0.10, "thread_pitch": 0.0},
+  {"name": "Bore",       "tool_number": 3, "kind": "bore",   "width": 4.0, "nose_radius": 0.4, "max_depth": 25.0, "rpm": 700.0,  "feed": 0.12, "thread_pitch": 0.0},
+  {"name": "Groove 3mm", "tool_number": 4, "kind": "groove", "width": 3.0, "nose_radius": 0.2, "max_depth": 5.0,  "rpm": 500.0,  "feed": 0.06, "thread_pitch": 0.0},
+  {"name": "Part 2mm",   "tool_number": 5, "kind": "part",   "width": 2.0, "nose_radius": 0.1, "max_depth": 20.0, "rpm": 400.0,  "feed": 0.05, "thread_pitch": 0.0},
+  {"name": "Thread 60deg","tool_number": 6, "kind": "thread", "width": 1.6, "nose_radius": 0.1, "max_depth": 5.0,  "rpm": 250.0,  "feed": 0.0,  "thread_pitch": 2.0}
+]
