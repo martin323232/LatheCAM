@@ -8,6 +8,7 @@ import FreeCADGui as Gui
 
 from . import objects
 from . import vis
+from . import sim
 from .program import post_document
 from .model import OP_TYPES
 
@@ -108,6 +109,30 @@ class CmdVisualize:
             vis.visualize(doc)
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(None, "LatheCAM visualize failed", str(e))
+            return
+        try:
+            Gui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
+
+
+class CmdSimulate:
+    def GetResources(self):
+        return {"MenuText": "Simulate",
+                "ToolTip": "Compute the finished part from the toolpath and animate the tool",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        doc = Gui.ActiveDocument.Document
+        try:
+            sim.simulate(doc)
+            sim.animate(doc)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(None, "LatheCAM simulation failed", str(e))
             return
         try:
             Gui.SendMsgToActiveView("ViewFit")
