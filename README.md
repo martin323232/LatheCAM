@@ -78,6 +78,16 @@ freecadcmd tests/test_headless.py      # full addon (run from the repo root)
 `examples/demo_program.py` builds a complete part program headless and
 writes `demo.nc`.
 
+`examples/build_examples.py` builds three ready-to-use parts into
+`examples/parts/` (each an FCStd with Setup + ops + toolpath visualization
++ simulated part, plus the posted NC):
+
+| Part | Stock | Exercises |
+|---|---|---|
+| `spindle_shaft` | Ø30 × 62 | facing, 2-step roughing, profile finish w/ chamfer, relief groove, M16×2 G32 thread, part-off |
+| `bushing` | Ø30 × 32, pre-drilled Ø12 | OD + **boring** (cuts toward chuck, no diagonal feeds), part-off |
+| `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
+
 ## Changelog
 
 ### 0.1.8
