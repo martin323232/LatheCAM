@@ -11,16 +11,57 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL_LIBRARY_PATH = os.path.join(_HERE, "tool_library.json")
 
 
-def load_tools(path: str = None) -> Dict[str, Tool]:
+def user_tool_dir() -> str:
+    """Per-user tool library directory (survives addon updates).
+
+    Uses FreeCAD's user AppData dir when available (so it lands next to the
+    user's config), else falls back to ~/.lathecam for headless use."""
+    try:
+        import FreeCAD
+        base = FreeCAD.getUserAppDataDir()
+    except Exception:
+        base = os.path.join(os.path.expanduser("~"), ".lathecam")
+    d = os.path.join(base, "LatheCAM_tools")
+    return d
+
+
+def user_tool_library_path() -> str:
+    return os.path.join(user_tool_dir(), "tools.json")
+
+
+def _read_tool_file(path):
     import json
-    path = path or TOOL_LIBRARY_PATH
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        tools = [Tool(**t) for t in data]
-    except (OSError, ValueError):
-        tools = Tool.default_library()
-    return {t.name: t for t in tools}
+            return [Tool(**t) for t in json.load(f)]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def load_tools(path: str = None) -> Dict[str, Tool]:
+    """Built-in library merged with the user library (user wins by name).
+
+    An explicit ``path`` (from Setup.ToolLibraryFile) replaces the built-in
+    base entirely; otherwise the built-in json is the base and the per-user
+    tools.json is layered on top so custom tools and renumbered tools persist
+    across addon updates. Raises ValueError if two tools share a T number.
+    """
+    if path:
+        base = _read_tool_file(path) or Tool.default_library()
+    else:
+        base = _read_tool_file(TOOL_LIBRARY_PATH) or Tool.default_library()
+    tools = {t.name: t for t in base}
+    if not path:
+        for t in _read_tool_file(user_tool_library_path()):
+            tools[t.name] = t
+    seen = {}
+    for t in tools.values():
+        if t.tool_number in seen:
+            raise ValueError(
+                f"duplicate tool number T{t.tool_number:02d}: "
+                f"{seen[t.tool_number]!r} and {t.name!r}")
+        seen[t.tool_number] = t.name
+    return tools
 
 
 def build_blocks(setup_obj, op_objs, tools: Dict[str, Tool]) -> List[Block]:
@@ -59,7 +100,7 @@ def post_document(doc, filename: str = None) -> str:
         raise ValueError("no Lathe::Setup object in document")
     if not ops:
         raise ValueError("no Lathe::Op objects in document")
-    tools = load_tools()
+    tools = load_tools(str(getattr(setup, "ToolLibraryFile", "")).strip() or None)
     blocks = build_blocks(setup, ops, tools)
     stock = setup.Proxy.to_stock()
     checker = CollisionChecker(stock)
@@ -78,6 +119,7 @@ def post_document(doc, filename: str = None) -> str:
         css=bool(getattr(setup, "UseCSS", False)),
         line_numbers=bool(getattr(setup, "LineNumbers", False)),
         tool_change=bool(getattr(setup, "ToolChange", False)),
+        tool_change_prompt=bool(getattr(setup, "ToolChangePrompt", True)),
     )
     if filename:
         with open(filename, "w", encoding="utf-8") as f:

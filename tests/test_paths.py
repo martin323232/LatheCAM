@@ -271,6 +271,59 @@ def test_review_round2():
         check("R7: thread past shoulder raises", "shoulder" in str(e), str(e))
 
 
+def test_tool_library():
+    import json
+    import tempfile
+    from LatheCAM import program as prog
+
+    tl = tools()
+    stock = Stock(diameter=25.0, length=45.0)
+
+    # tool_change_prompt=False: T.. M06 kept, no M00 stop (automatic turret)
+    mv1 = generate(Op("od_finish", "OD-finish", "f", z_end=-20.0,
+                      target_diameter=20.0), tl["OD-finish"], stock)
+    mv2 = generate(Op("part", "Part 2mm", "p", z_start=-45.0, peck=0.5),
+                   tl["Part 2mm"], stock)
+    g = post_program([Block("(op1)", 2, 1200, mv1), Block("(op2)", 5, 400, mv2)],
+                     tool_change=True, tool_change_prompt=False)
+    check("prompt off: T.. M06 kept", "T05 M06" in g)
+    check("prompt off: no M00", "M00" not in g)
+
+    # user library: override built-in by name + add a custom tool
+    upath = os.path.join(tempfile.mkdtemp(), "tools.json")
+    with open(upath, "w") as f:
+        json.dump([
+            {"name": "OD-finish", "tool_number": 22, "kind": "turn",
+             "width": 3.0, "nose_radius": 0.8, "max_depth": 20.0,
+             "rpm": 1500.0, "feed": 0.08, "thread_pitch": 0.0,
+             "z_reference": "centre"},
+            {"name": "My groover", "tool_number": 44, "kind": "groove",
+             "width": 2.0, "nose_radius": 0.2, "max_depth": 5.0,
+             "rpm": 600.0, "feed": 0.05, "thread_pitch": 0.0,
+             "z_reference": "left"},
+        ], f)
+    orig = prog.user_tool_library_path
+    prog.user_tool_library_path = lambda: upath
+    try:
+        merged = prog.load_tools()
+        check("user lib: override wins by name",
+              merged["OD-finish"].tool_number == 22
+              and merged["OD-finish"].rpm == 1500.0)
+        check("user lib: custom tool added",
+              "My groover" in merged
+              and merged["My groover"].tool_number == 44)
+        check("user lib: untouched built-ins remain", "OD-rough" in merged)
+        with open(upath, "w") as f:
+            json.dump([{"name": "Dup", "tool_number": 1, "kind": "turn"}], f)
+        try:
+            prog.load_tools()
+            check("user lib: duplicate T# raises", False, "no error raised")
+        except ValueError as e:
+            check("user lib: duplicate T# raises", "duplicate" in str(e), str(e))
+    finally:
+        prog.user_tool_library_path = orig
+
+
 if __name__ == "__main__":
     test_thread_math()
     gcode = test_full_program()
@@ -278,6 +331,7 @@ if __name__ == "__main__":
     test_collision_checker()
     test_post_dialect()
     test_review_round2()
+    test_tool_library()
     print("\n--- sample gcode (first 40 lines) ---")
     print("\n".join(gcode.splitlines()[:40]))
     print(f"\n{len(FAILED)} failed" if FAILED else "\nALL TESTS PASSED")

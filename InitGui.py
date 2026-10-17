@@ -22,6 +22,8 @@ class LatheCAMWorkbench(Gui.Workbench):
 
         cmds = ["CmdLatheSetup"]
         Gui.addCommand("CmdLatheSetup", gui.CmdSetup())
+        cmds.append("CmdLatheTools")
+        Gui.addCommand("CmdLatheTools", gui.CmdToolLibrary())
         for t in OP_TYPES:
             name = f"CmdLatheOp_{t}"
             Gui.addCommand(name, gui.make_op_command(t))

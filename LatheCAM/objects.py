@@ -62,6 +62,15 @@ class SetupProxy:
                         translate("Lathe", "Emit N line numbers")).LineNumbers = False
         obj.addProperty("App::PropertyBool", "ToolChange", "Post",
                         translate("Lathe", "Emit T/M6 tool changes")).ToolChange = True
+        obj.addProperty("App::PropertyBool", "ToolChangePrompt", "Post",
+                        translate("Lathe", "Stop (M00) at each tool change for "
+                                  "manual confirmation; off = automatic turret")
+                        ).ToolChangePrompt = True
+        obj.addProperty("App::PropertyFile", "ToolLibraryFile", "Post",
+                        translate("Lathe", "Optional tool-library JSON replacing "
+                                  "the built-in set (per-user tools.json is "
+                                  "layered on top unless this is set)")
+                        ).ToolLibraryFile = ""
         obj.addProperty("App::PropertyPlacement", "ViewPlacement", "View",
                         translate("Lathe", "Placement of visualization/simulation "
                                   "objects in the model (lathe Z = spindle axis)")

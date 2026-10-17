@@ -31,6 +31,8 @@ setup = objects.create_setup(doc)
 setup.StockDiameter = 30.0
 setup.StockLength = 60.0
 setup.MaxRPM = 3000.0
+check("setup has ToolChangePrompt", hasattr(setup, "ToolChangePrompt"))
+check("setup has ToolLibraryFile", hasattr(setup, "ToolLibraryFile"))
 
 f = objects.create_op(doc, "face")
 f.Order = 10

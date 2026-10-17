@@ -90,6 +90,21 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.1.9
+
+- **User tool library**: a per-user `tools.json` (FreeCAD user AppData →
+  `LatheCAM_tools/tools.json`) is layered over the built-in library —
+  entries override by name, new names are added, and the file survives
+  addon updates. New **Tool Library** toolbar command edits names, T
+  numbers, geometry and cutting data in a table dialog.
+- Setup `ToolLibraryFile`: point an individual document at its own
+  library JSON instead of the per-user one.
+- Duplicate T numbers are rejected at post time (the machine turret keys
+  on them).
+- Setup `ToolChangePrompt` (default on): `T.. M06` + `M00 (LOAD T..)` stop
+  for manual tooling; set **False** for a fully automatic turret (emits
+  `T.. M06` only, no stop).
+
 ### 0.1.8
 
 - `od_rough` with a mid-length start (`ZStart < 0`) now plunges exactly at

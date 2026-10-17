@@ -8,5 +8,5 @@ Coordinate conventions (lathe):
   Z = 0 at the stock face, negative into the stock (towards the chuck)
 """
 
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 __author__ = "maker (OpenClaw) for martin323232"

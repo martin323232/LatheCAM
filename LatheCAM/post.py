@@ -25,12 +25,14 @@ def _fmt(v: float) -> str:
 class MassoPost:
     def __init__(self, css: bool = False, line_numbers: bool = False,
                  tool_change: bool = False, safe_start: str = "G21 G90 G18 G40",
-                 coolant: bool = True):
+                 coolant: bool = True, tool_change_prompt: bool = True):
         self.css = css
         self.line_numbers = line_numbers
         self.tool_change = tool_change
         self.safe_start = safe_start
         self.coolant = coolant
+        # False = fully automatic turret: emit T.. M06 with no M00 stop
+        self.tool_change_prompt = tool_change_prompt
 
     def post(self, blocks: List["Block"]) -> str:
         out: List[str] = []
@@ -60,9 +62,10 @@ class MassoPost:
                         emit("M09")
                     emit("M05")
                 emit(f"T{b.tool_number:02d} M06")
-                tname = getattr(b, "tool_name", "") or ""
-                label = f"LOAD T{b.tool_number:02d}" + (f" {tname}" if tname else "")
-                emit(f"M00 ({label})")  # full stop: operator confirms the tool
+                if self.tool_change_prompt:
+                    tname = getattr(b, "tool_name", "") or ""
+                    label = f"LOAD T{b.tool_number:02d}" + (f" {tname}" if tname else "")
+                    emit(f"M00 ({label})")  # full stop: operator confirms the tool
                 first_tc = False
             if b.rpm:
                 # K6: G32 threading must run G97 + G95 (feed in mm/rev,
