@@ -40,6 +40,9 @@ class Tool:
     # spindle/feed defaults for this tool (feed = mm/rev)
     rpm: float = 800.0
     feed: float = 0.15
+    # B: dedicated feed (mm/rev) for finish ops when the op feed is 0
+    # (0 = off, fall back to .feed). e.g. DCMT070204 -> 0.03.
+    finish_feed: float = 0.0
     thread_pitch: float = 0.0       # for thread tools (mm)
     # where the machine tool offset is measured for groove/part tools:
     # left = chuck-side corner, right = face-side corner, centre = middle.
@@ -107,9 +110,15 @@ class Op:
     # True = back-boring, cut toward the face (+Z)
     bore_back_cut: bool = False
 
-    # od_finish profile: list of (diameter, z) points from start to end.
-    # Empty = simple cylinder from target_diameter at z_start to z_end.
-    profile: List[Tuple[float, float]] = field(default_factory=list)
+    # od_finish profile: list of (diameter, z[, radius]) points start to end.
+    # radius (A) applies to the segment ENDING at that point: >0 G02 CW,
+    # <0 G03 CCW, 0/absent = straight. Empty = simple cylinder.
+    profile: List[Tuple[float, ...]] = field(default_factory=list)
+    # C: 45-degree auto-chamfer (mm) at the profile start/end corner, 0 = off
+    chamfer_start: float = 0.0
+    chamfer_end: float = 0.0
+    # E: internal thread (cut inside an existing bore, toward the chuck)
+    thread_inside: bool = False
 
     def validate(self, stock: Stock) -> None:
         if self.type not in OP_TYPES:
@@ -131,6 +140,17 @@ class Op:
                 raise ValueError("thread_pitch must be > 0")
             if self.thread_major_diameter <= 0:
                 raise ValueError("thread_major_diameter must be > 0")
+            if self.thread_inside:
+                if stock.bore_diameter <= 0:
+                    raise ValueError("internal thread: stock has no bore "
+                                     "(set bore_diameter)")
+                minor = self.thread_major_diameter - 2 * thread_depth(
+                    self.thread_pitch)
+                if minor < stock.bore_diameter - 1e-9:
+                    raise ValueError(
+                        f"internal thread: minor dia {minor:.2f} is below the "
+                        f"existing bore {stock.bore_diameter:.2f} — the bore "
+                        "must be drilled at or under the thread minor dia")
             lead_out = max(1.0 * self.thread_pitch, 1.0)
             z_end = self.z_start - self.thread_length - lead_out
             if z_end < -stock.length:

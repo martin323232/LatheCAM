@@ -110,7 +110,7 @@ def test_a3_feed_mode():
     check("A3: no G95 in mm/min program", "G95" not in g)
     g2 = post_program([Block("op", 2, 2500, mv)], feed_mode="mm_per_rev")
     check("A3: mm_per_rev emits G95 + mm/rev feed",
-          "G95" in g2 and "F0.04" in g2 and "G94" not in g2)
+          "G95" in g2 and "F.04" in g2 and "G94" not in g2)
     # thread sandwich: G94 -> G95 (thread block only) -> G94
     mv_fin = _finish_moves(tl=tl)
     mv_thr = generate(Op("thread", "Thread 60deg", "t", z_start=-20.0,
@@ -201,7 +201,8 @@ def test_a8_number_format():
     check("A8: whole keeps dot", _fmt(31.0) == "31.")
     check("A8: zero -> 0.", _fmt(0.0) == "0.")
     check("A8: fractional trimmed", _fmt(17.522) == "17.522")
-    check("A8: negative fractional", _fmt(-0.166) == "-0.166")
+    check("A8: negative fractional", _fmt(-0.166) == "-.166")
+    check("A8: leading zero dropped", _fmt(0.397) == ".397")
     check("A8: negative whole keeps dot", _fmt(-20.0) == "-20.")
     mv = _finish_moves()
     g = post_program([Block("op", 2, 1200, mv)])
@@ -346,6 +347,167 @@ def test_d_user_library():
     check("D: T8 op posts F50.", "F50." in g)
 
 
+
+# ================================================================ v0.3.0
+
+def test_b_finish_feed():
+    """B: finish ops use tool.finish_feed when op feed is 0."""
+    stock = Stock(diameter=26.0, length=40.0, max_rpm=2500.0)
+    tool = Tool("DCMT", 5, "turn", rpm=2500.0, feed=0.04, finish_feed=0.03)
+    op = Op("od_finish", "DCMT", "finish", z_start=0.0, z_end=-30.0,
+            target_diameter=20.0)
+    g = post_program([Block("t", 5, 2500.0, generate(op, tool, stock))],
+                     feed_mode="mm_per_min")
+    check("B: finish op uses finish_feed (0.03*2500 -> F75.)", "F75." in g)
+    op2 = Op("od_rough", "DCMT", "rough", z_start=0.0, z_end=-30.0,
+             target_diameter=20.0, depth_per_pass=2.0)
+    g2 = post_program([Block("t", 5, 2500.0, generate(op2, tool, stock))],
+                      feed_mode="mm_per_min")
+    check("B: rough op keeps tool feed (0.04*2500 -> F100.)", "F100." in g2)
+    op3 = Op("od_finish", "DCMT", "f", z_start=0.0, z_end=-30.0,
+             target_diameter=20.0, feed=0.05)
+    g3 = post_program([Block("t", 5, 2500.0, generate(op3, tool, stock))],
+                      feed_mode="mm_per_min")
+    check("B: op feed wins over finish_feed", "F125." in g3 and "F75." not in g3)
+
+
+def test_c_chamfer():
+    """C: 45-degree auto-chamfer at profile start/end corners."""
+    stock = Stock(diameter=30.0, length=60.0)
+    tool = Tool("fin", 2, "turn")
+    base = [(20.0, 0.0), (20.0, -30.0)]
+    op = Op("od_finish", "fin", "c", z_start=0.0, z_end=-30.0,
+            profile=base, chamfer_start=2.0)
+    pts = [(m.x, m.z) for m in generate(op, tool, stock) if m.kind == "feed"]
+    check("C: start chamfer on-part geometry",
+          pts[0] == (16.0, 0.0) and pts[1] == (20.0, -2.0), str(pts[:3]))
+    op = Op("od_finish", "fin", "c", z_start=0.0, z_end=-30.0,
+            profile=base, chamfer_end=1.5)
+    pts = [(m.x, m.z) for m in generate(op, tool, stock) if m.kind == "feed"]
+    check("C: end chamfer on-part geometry",
+          pts[-2] == (20.0, -28.5) and pts[-1] == (23.0, -30.0), str(pts[-2:]))
+    op0 = Op("od_finish", "fin", "c", z_start=0.0, z_end=-30.0, profile=base,
+             chamfer_start=0.0, chamfer_end=0.0)
+    check("C: chamfer 0 leaves profile untouched",
+          [(m.x, m.z) for m in generate(op0, tool, stock) if m.kind == "feed"]
+          == [(20.0, 0.0), (20.0, -30.0)])
+    for name, bad in (
+        ("start too big", Op("od_finish", "fin", "c", z_start=0.0, z_end=-30.0,
+                             profile=base, chamfer_start=35.0)),
+        ("end past face", Op("od_finish", "fin", "c", z_start=0.0, z_end=-1.0,
+                             profile=[(20.0, 0.0), (20.0, -1.0)],
+                             chamfer_end=2.0)),
+        ("end on radial seg", Op("od_finish", "fin", "c", z_start=0.0,
+                                 z_end=-30.0,
+                                 profile=[(20.0, -20.0), (26.0, -30.0)],
+                                 chamfer_end=1.0)),
+    ):
+        try:
+            generate(bad, tool, stock)
+            check(f"C: guard rejects {name}", False)
+        except ValueError:
+            check(f"C: guard rejects {name}", True)
+
+
+def test_a_arcs():
+    """A: arc profile entries -> G02/G03 R (hand-calculated quarter circle)."""
+    stock = Stock(diameter=30.0, length=60.0)
+    tool = Tool("fin", 2, "turn", rpm=1000.0, feed=0.1)
+    # (20,0)->(28,-4): radius-plane (10,0)->(14,-4), center (10,-4) r=4, CW
+    op = Op("od_finish", "fin", "a", z_start=0.0, z_end=-4.0,
+            profile=[(20.0, 0.0), (28.0, -4.0, 4.0)])
+    mv = generate(op, tool, stock)
+    arc = [m for m in mv if m.kind == "cw"]
+    check("A: R>0 -> cw motion carrying radius",
+          len(arc) == 1 and arc[0].radius == 4.0)
+    g = post_program([Block("t", 2, 1000.0, mv)], feed_mode="mm_per_min")
+    check("A: cw posts G02 X28. Z-4. R4. F100.",
+          "G02 X28. Z-4. R4. F100." in g, g)
+    op2 = Op("od_finish", "fin", "a", z_start=0.0, z_end=-4.0,
+             profile=[(20.0, 0.0), (28.0, -4.0, -4.0)])
+    g2 = post_program([Block("t", 2, 1000.0, generate(op2, tool, stock))],
+                      feed_mode="mm_per_min")
+    check("A: R<0 posts G03", "G03 X28. Z-4. R4. F100." in g2)
+    op3 = Op("od_finish", "fin", "a", z_start=0.0, z_end=-4.0,
+             profile=[(20.0, 0.0), (28.0, -4.0, 1.0)])
+    try:
+        generate(op3, tool, stock)
+        check("A: R < chord/2 rejected", False)
+    except ValueError as e:
+        check("A: R < chord/2 rejected", "too small" in str(e), str(e))
+
+
+def test_n_nosecomp():
+    """N: opt-in G42/G40; default off leaves output untouched."""
+    stock = Stock(diameter=30.0, length=60.0)
+    tool = Tool("fin", 2, "turn", rpm=1000.0, feed=0.1)
+    op = Op("od_finish", "fin", "n", z_start=0.0, z_end=-30.0,
+            target_diameter=20.0)
+    mv = generate(op, tool, stock)
+    g_off = lines_of(post_program([Block("t", 2, 1000.0, mv)]))
+    check("N: default off emits no G42/G40 lines",
+          "G42" not in g_off and "G40" not in g_off)
+    g_on = lines_of(post_program([Block("t", 2, 1000.0, mv)], nose_comp=True))
+    check("N: G42 emitted", "G42" in g_on)
+    check("N: G40 emitted", "G40" in g_on)
+    first_g1 = next(i for i, l in enumerate(g_on) if l.startswith("G1 "))
+    check("N: G42 before first cut", g_on.index("G42") < first_g1)
+    last_g1 = max(i for i, l in enumerate(g_on) if l.startswith("G1 "))
+    check("N: G40 after last cut (before retract)",
+          max(i for i, l in enumerate(g_on) if l == "G40") > last_g1)
+
+
+def test_d_proven_references():
+    """D: control-line order of the proven BobCAD programs (all machine-run)."""
+    ref_dir = os.path.join(os.path.dirname(__file__), "reference")
+    cases = {
+        "b.nc": ["O0100", "G40 G18 G21 G90", "G53 G0 X0.", "G53 G0 Z0.",
+                 "T0003 M06", "G50 S200", "G97 S200 M03", "M08", "M64 P1",
+                 "M09", "M05", "M30"],
+        "middle_bearing.nc": ["O0100", "G40 G18 G21 G90", "G53 G0 X0.",
+                              "G53 G0 Z0.", "T0001 M06", "G50 S2000",
+                              "G97 S2000 M03", "M08", "M64 P1", "T0005 M06",
+                              "G97 S2000 M04", "M65 P1", "G53 G0 X0.", "M30"],
+        "isolation_plastic.nc": ["O0100", "G40 G18 G21 G90", "T0005 M06",
+                                 "G50 S2500", "G97 S2500 M03", "M08",
+                                 "M64 P1", "M09", "M05", "M30"],
+    }
+    for name, expect in cases.items():
+        path = os.path.join(ref_dir, name)
+        ok = os.path.exists(path)
+        check(f"D: {name} present", ok)
+        if not ok:
+            continue
+        with open(path, encoding="utf-8", errors="replace") as f:
+            ref = lines_of(f.read().replace("\r\n", "\n"))
+        check(f"D: {name} control lines in order", subseq(expect, ref),
+              str([n for n in expect if n not in ref]))
+
+
+def test_e_thread_inside():
+    """E: internal thread — toward chuck, G97+G95, bore validation."""
+    stock = Stock(diameter=30.0, length=60.0, bore_diameter=8.0)
+    tool = Tool("th", 6, "thread", rpm=250.0, feed=0.0, thread_pitch=1.0)
+    op = Op("thread", "th", "internal", z_start=-5.0, z_end=-20.0,
+            thread_major_diameter=10.0, thread_pitch=1.0,
+            thread_length=12.0, thread_inside=True)
+    mv = generate(op, tool, stock)
+    th = [m for m in mv if m.kind == "thread"]
+    check("E: internal thread cuts toward chuck (-Z)",
+          len(th) >= 3 and all(m.z < -5.0 for m in th))
+    g = post_program([Block("t", 6, 250.0, mv)], feed_mode="mm_per_min")
+    check("E: thread block forces G95", "G95" in g)
+    check("E: G32 carries pitch F", "G32 Z-18. F1." in g, g)
+    try:
+        generate(Op("thread", "th", "i", z_start=-5.0, z_end=-20.0,
+                    thread_major_diameter=10.0, thread_pitch=1.0,
+                    thread_length=12.0, thread_inside=True), tool,
+               Stock(diameter=30.0, length=60.0))
+        check("E: internal thread requires a bore", False)
+    except ValueError:
+        check("E: internal thread requires a bore", True)
+
+
 if __name__ == "__main__":
     test_a1_home_toolchange()
     test_a2_tool_word()
@@ -361,5 +523,11 @@ if __name__ == "__main__":
     test_b3_face_allowance()
     test_c1_reference_regression()
     test_d_user_library()
+    test_b_finish_feed()
+    test_c_chamfer()
+    test_a_arcs()
+    test_n_nosecomp()
+    test_d_proven_references()
+    test_e_thread_inside()
     print(f"\n{len(FAILED)} failed: {FAILED}" if FAILED else "\nALL TESTS PASSED")
     sys.exit(1 if FAILED else 0)

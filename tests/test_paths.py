@@ -333,6 +333,46 @@ def test_tool_library():
         prog.user_tool_library_path = orig
 
 
+
+# ---------------------------------------------------------------- v0.3.0
+
+def test_arc_samples():
+    """A4: arc collision sampling lies on the true circle."""
+    import math as _m
+    from LatheCAM.paths import _arc_samples
+    p1 = Motion("rapid", 20.0, 0.0)
+    p2 = Motion("cw", 28.0, -4.0, radius=4.0)
+    pts = _arc_samples(p1, p2, 0.05)
+    check("A4: arc samples lie on the circle (center 10,-4 r4)",
+          all(abs(_m.hypot(x / 2 - 10.0, z + 4.0) - 4.0) < 1e-6
+              for x, z in pts))
+    check("A4: samples include both endpoints",
+          abs(pts[0][0] - 20) < 1e-9 and abs(pts[-1][0] - 28) < 1e-9
+          and abs(pts[-1][1] + 4) < 1e-9)
+
+
+def test_arc_collision_clean():
+    """A4: an OD arc path posts collision-free through the checker."""
+    stock = Stock(diameter=30.0, length=60.0)
+    tool = Tool("fin", 2, "turn")
+    op = Op("od_finish", "fin", "a", z_start=0.0, z_end=-10.0,
+            profile=[(30.0, 0.0), (20.0, -10.0, 12.0)])
+    probs = check_collisions(generate(op, tool, stock), stock)
+    check("A4: arc path collision-free", not probs, str(probs))
+
+
+def test_nose_offset():
+    """N2: with nose comp the checker records material conservatively."""
+    from LatheCAM.paths import CollisionChecker
+    stock = Stock(diameter=30.0, length=60.0)
+    mv = [Motion("feed", 20.0, 0.0, 0.1), Motion("feed", 20.0, -30.0, 0.1)]
+    c = CollisionChecker(stock)
+    c.add(mv, nose_radius=0.8)
+    j = c._bucket(-15.0)
+    check("N2: nose comp records conservative core (20+2*0.8)",
+          abs(c.core[j] - 21.6) < 1e-6, str(c.core[j]))
+
+
 if __name__ == "__main__":
     test_thread_math()
     gcode = test_full_program()
@@ -341,6 +381,9 @@ if __name__ == "__main__":
     test_post_dialect()
     test_review_round2()
     test_tool_library()
+    test_arc_samples()
+    test_arc_collision_clean()
+    test_nose_offset()
     print("\n--- sample gcode (first 40 lines) ---")
     print("\n".join(gcode.splitlines()[:40]))
     print(f"\n{len(FAILED)} failed" if FAILED else "\nALL TESTS PASSED")

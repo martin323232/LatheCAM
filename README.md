@@ -56,8 +56,22 @@ post `Masso_G3_Lathe`, verified on the machine):
   the pitch.
 - **Threading**: `G32 Z.. F<pitch>` passes, progressive infeed (first 0.3 mm,
   decreasing), optional spring pass. Spindle runs at fixed RPM.
-- Whole numbers keep the trailing dot (`X31.` `Z0.` `F100.`), like the
-  proven file.
+- **Arcs**: an `od_finish` profile entry may carry a segment radius
+  (`D,Z,R`); `R>0` posts `G02`, `R<0` posts `G03`, with `R` the true
+  geometric radius in mm. VERIFY on the machine: Masso's CW/CCW reading
+  under diameter programming must be confirmed by dry-run; if arcs bulge
+  the wrong way, negate the R values (a Setup `ArcFlip` flag can be added).
+- **Nose compensation** (`Setup.NoseComp`, default off): control-side
+  compensation — `G42` before the first cut, `G40` before rapids. VERIFY:
+  the G41/G42 side convention on Masso is unproven; the proven file is
+  post-side compensated instead. The collision checker stays conservative
+  when this is on.
+- **Internal threads** (`Op.ThreadInside`): cut inside the existing bore
+  toward the chuck, `G97`+`G95`, retract at minor dia. VERIFY — no proven
+  reference program covers internal threading on this machine; dry-run
+  mandatory.
+- Whole numbers keep the trailing dot and values below 1 drop the leading
+  zero (`X31.` `Z0.` `F100.` `Z-.166` `R.397`), exactly like the proven file.
 
 ## Safety
 
@@ -115,6 +129,32 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.0
+
+- **Arc output (A)**: `ProfileString` accepts `D,Z,R;` — the segment ending
+  at that point posts `G02`/`G03` with `R` (true geometric radius). The
+  collision checker samples arcs as chords. Chord validation rejects `R`
+  smaller than half the chord.
+- **Auto-chamfer (C)**: `Op.ChamferStart` / `Op.ChamferEnd` (45°, mm) cut
+  the face/shoulder corner of an `od_finish` profile without hand-editing
+  the profile; guards reject chamfers that do not fit the adjacent segment.
+- **finish_feed (B)**: tools carry an optional `finish_feed` (mm/rev) used
+  by finish ops when the op feed is 0; new column in the Tool Library
+  dialog. `examples/tools_masso_g3.json`: DCMT070204 → 0.03 (F75 @ 2500).
+- **Nose compensation (N, opt-in)**: `Setup.NoseComp` posts `G42`/`G40`
+  around cuts (VERIFY — see Conventions).
+- **Internal threading (E, VERIFY)**: `Op.ThreadInside` threads an existing
+  bore toward the chuck.
+- **Number format**: values below 1 drop the leading zero (`Z-.166`,
+  `R.397`, `F.381`) — byte-matching the proven file's style.
+- **References (D)**: all 11 machine-run BobCAD programs live in
+  `tests/reference/`; control-line order is regression-tested.
+- **Benchmark**: `examples/benchmark_drum_screw.py` reproduces the proven
+  `drum_screw_magnet_nfc.nc` finish pass — 13/13 cutting moves match
+  (including the four `R.397` arcs) and the control lines post in proven
+  order. Differences are deliberate: explicit `G94`/`F` words, safer rapid
+  clearances, no final `T0001 M06`.
 
 ### 0.2.0
 

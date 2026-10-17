@@ -156,6 +156,7 @@ _TOOL_COLS = [
     ("Max depth", "max_depth", "float"),
     ("RPM", "rpm", "float"),
     ("Feed", "feed", "float"),
+    ("Finish feed", "finish_feed", "float"),
     ("Pitch", "thread_pitch", "float"),
     ("Z ref", "z_reference", "zref"),
     ("Spindle", "spindle_dir", "dir"),
@@ -221,6 +222,7 @@ class CmdToolLibrary:
                                    "kind": "turn", "width": 3.0,
                                    "nose_radius": 0.4, "max_depth": 20.0,
                                    "rpm": 800.0, "feed": 0.15,
+                                   "finish_feed": 0.0,
                                    "thread_pitch": 0.0, "z_reference": "left",
                                    "spindle_dir": "cw", "note": ""})())
 

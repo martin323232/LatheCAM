@@ -98,11 +98,12 @@ doc.removeObject(bad.Name)  # keep doc postable for the vis test below
 
 # ProfileString parsing (od_finish stepped profile)
 prof_op = objects.create_op(doc, "od_finish")
-prof_op.ProfileString = "15,0; 15,-25; 25,-25; 25,-45"
+prof_op.ProfileString = "15,0; 15,-25; 25,-25; 25,-45,0.4"
 doc.recompute()
 pv = prof_op.Proxy.to_op().profile
-check("ProfileString parsed", pv == [(15.0, 0.0), (15.0, -25.0),
-      (25.0, -25.0), (25.0, -45.0)], str(pv))
+check("ProfileString parsed (D,Z[,R] triples)",
+      pv == [(15.0, 0.0, 0.0), (15.0, -25.0, 0.0),
+             (25.0, -25.0, 0.0), (25.0, -45.0, 0.4)], str(pv))
 
 # --- toolpath visualization (vis.py) ---
 from LatheCAM import vis

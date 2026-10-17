@@ -13,6 +13,9 @@ BobCAD-CAM output (post "Masso_G3_Lathe", drum_screw_magnet_nfc.nc):
   G94 + F mm/min            default feed mode (proven file has no G95)
   G95 + F mm/rev            thread block only (G32 needs feed/rev)
   G32 Z.. F<pitch>          threading, spindle-synchronised, no X word
+  G02/G03 X.. Z.. R.. F..   arc feed moves (true geometric radius)
+  G42 / G40                 nose-radius compensation, opt-in (NoseComp):
+                            G42 before the first cut, G40 before rapids
   M64 P1 / M65 P1           optional cycle output (chip conveyor etc.)
   M09, M65 P1, M05, G53 X0, G53 Z0, M30   program end (no final tool change)
 
@@ -26,10 +29,16 @@ from .paths import Motion
 
 def _fmt(v: float) -> str:
     """Format a number like the proven file: whole numbers keep the
-    trailing dot (X31. Z0. F100.), fractional values drop trailing zeros."""
+    trailing dot (X31. Z0. F100.), fractional values drop trailing zeros
+    AND the leading zero (Z-.166 R.397 F.381), exactly as the proven
+    Masso file prints them."""
     s = f"{v:.3f}".rstrip("0")
-    if s in ("-0.", ""):
+    if s in ("-0.", "0.", ""):
         return "0."
+    if s.startswith("0."):
+        return s[1:]
+    if s.startswith("-0."):
+        return "-" + s[2:]
     return s
 
 
@@ -38,7 +47,8 @@ class MassoPost:
                  tool_change: bool = False, safe_start: str = "G40 G18 G21 G90",
                  coolant: bool = True, tool_change_prompt: bool = True,
                  feed_mode: str = "mm_per_min", program_number: int = 100,
-                 cycle_output: bool = False, cycle_output_p: int = 1):
+                 cycle_output: bool = False, cycle_output_p: int = 1,
+                 nose_comp: bool = False):
         self.css = css
         self.line_numbers = line_numbers
         self.tool_change = tool_change
@@ -51,6 +61,9 @@ class MassoPost:
         self.program_number = program_number
         self.cycle_output = cycle_output
         self.cycle_output_p = int(cycle_output_p or 1)
+        # N1: opt-in control-side nose compensation (G42/G40). Default off:
+        # the proven file is post-side compensated; G42 on Masso is VERIFY.
+        self.nose_comp = nose_comp
 
     def post(self, blocks: List["Block"]) -> str:
         out: List[str] = []
@@ -77,6 +90,7 @@ class MassoPost:
         spindle_on = False
         prev_rpm = None
         cycle_on = False
+        comp_on = False
 
         for bi, b in enumerate(blocks):
             emit(f"({b.comment})")
@@ -132,6 +146,22 @@ class MassoPost:
                 if mo.kind == "dwell":
                     emit(f"G4 P{_fmt(mo.feed)}")
                     continue
+                # N1: G42 before the first cut of the program, G40 before
+                # any rapid (retract / tool change) once compensation is on.
+                if self.nose_comp:
+                    if mo.kind in ("feed", "cw", "ccw") and not comp_on:
+                        emit("G42")
+                        comp_on = True
+                    elif mo.kind == "rapid" and comp_on:
+                        emit("G40")
+                        comp_on = False
+                if mo.kind in ("cw", "ccw"):
+                    # A3: arc feed move; R is the true geometric radius
+                    g = "G02" if mo.kind == "cw" else "G03"
+                    fa = mo.feed * (b.rpm or 800) if mode == "G94" else mo.feed
+                    emit(f"{g} X{_fmt(mo.x)} Z{_fmt(mo.z)} "
+                         f"R{_fmt(abs(mo.radius))} F{_fmt(fa)}")
+                    continue
                 g = {"rapid": "G0", "feed": "G1", "thread": "G32"}[mo.kind]
                 if mo.kind == "thread":
                     # Masso G32 syntax: Z and F only (X pre-positioned)
@@ -150,6 +180,8 @@ class MassoPost:
         # A1: program end — M09, (M65), M05, home, M30. No tool change here:
         # the proven file's final T0001 M06 (turret index with spindle
         # running) is a known BobCAD flaw and is deliberately NOT copied.
+        if comp_on:
+            emit("G40")
         if self.coolant:
             emit("M09")
         if self.cycle_output:

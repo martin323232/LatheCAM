@@ -99,6 +99,7 @@ def build_blocks(setup_obj, op_objs, tools: Dict[str, Tool]) -> List[Block]:
         block.tool_kind = tool.kind
         block.tool_width = tool.width
         block.z_reference = getattr(tool, "z_reference", "centre")
+        block.nose_radius = getattr(tool, "nose_radius", 0.0)
         blocks.append(block)
     return blocks
 
@@ -118,13 +119,15 @@ def post_document(doc, filename: str = None) -> str:
     tools = load_tools(str(getattr(setup, "ToolLibraryFile", "")).strip() or None)
     blocks = build_blocks(setup, ops, tools)
     stock = _stock_for(setup, ops)
+    nose_comp = bool(getattr(setup, "NoseComp", False))
     checker = CollisionChecker(stock)
     for b in blocks:
         kind = getattr(b, "tool_kind", "turn")
         # kerf width only for groove/part tools; turning stays point-sampled
         tw = getattr(b, "tool_width", 0.0) if kind in ("groove", "part") else 0.0
         checker.add(b.moves, boring=getattr(b, "op_type", "").startswith("id_"),
-                    tool_width=tw, z_reference=getattr(b, "z_reference", "centre"))
+                    tool_width=tw, z_reference=getattr(b, "z_reference", "centre"),
+                    nose_radius=getattr(b, "nose_radius", 0.0) if nose_comp else 0.0)
     if checker.problems:
         raise ValueError("rapid collision check failed:\n  " + "\n  ".join(checker.problems))
     gcode = post_program(
@@ -139,6 +142,7 @@ def post_document(doc, filename: str = None) -> str:
         program_number=int(getattr(setup, "ProgramNumber", 100)),
         cycle_output=bool(getattr(setup, "CycleOutput", False)),
         cycle_output_p=int(getattr(setup, "CycleOutputP", 1) or 1),
+        nose_comp=nose_comp,
     )
     if filename:
         with open(filename, "w", encoding="utf-8") as f:

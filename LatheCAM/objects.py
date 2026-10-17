@@ -94,6 +94,12 @@ class SetupProxy:
         obj.addProperty("App::PropertyInteger", "CycleOutputP", "Post",
                         translate("Lathe", "P word for M64/M65 cycle output")
                         ).CycleOutputP = 1
+        obj.addProperty("App::PropertyBool", "NoseComp", "Post",
+                        translate("Lathe", "Control-side nose-radius "
+                                  "compensation: emit G42 before cuts and "
+                                  "G40 before rapids (VERIFY on machine: "
+                                  "G41/G42 side convention unproven)")
+                        ).NoseComp = False
         obj.addProperty("App::PropertyPlacement", "ViewPlacement", "View",
                         translate("Lathe", "Placement of visualization/simulation "
                                   "objects in the model (lathe Z = spindle axis)")
@@ -149,9 +155,20 @@ class OpProxy:
         obj.addProperty("App::PropertyLength", "ThreadMajorDia", "Thread").ThreadMajorDia = 20.0
         obj.addProperty(
             "App::PropertyString", "ProfileString", "Geometry",
-            translate("Lathe", "od_finish profile as 'D,Z; D,Z; ...' from start "
-                      "to end (empty = simple cylinder)"))
+            translate("Lathe", "od_finish profile as 'D,Z[,R]; D,Z[,R]; ...' "
+                      "from start to end (empty = simple cylinder). R applies "
+                      "to the segment ENDING at that point: >0 G02 CW, "
+                      "<0 G03 CCW, in mm"))
         obj.ProfileString = ""
+        obj.addProperty("App::PropertyLength", "ChamferStart", "Geometry",
+                        translate("Lathe", "od_finish: 45° chamfer (mm) at "
+                                  "the face corner of the profile, 0 = off")
+                        ).ChamferStart = 0.0
+        obj.addProperty("App::PropertyLength", "ChamferEnd", "Geometry",
+                        translate("Lathe", "od_finish: 45° chamfer (mm) at "
+                                  "the shoulder/back corner of the profile, "
+                                  "0 = off")
+                        ).ChamferEnd = 0.0
         obj.addProperty("App::PropertyFloat", "ThreadPitch", "Thread").ThreadPitch = 2.0
         obj.addProperty("App::PropertyLength", "ThreadLength", "Thread").ThreadLength = 20.0
         obj.addProperty("App::PropertyLength", "ThreadLeadIn", "Thread",
@@ -161,6 +178,11 @@ class OpProxy:
                         translate("Lathe", "deepest Z the thread may reach "
                                   "(shoulder/undercut; 0 = only stock length "
                                   "limits it)")).ThreadZLimit = 0.0
+        obj.addProperty("App::PropertyBool", "ThreadInside", "Thread",
+                        translate("Lathe", "internal thread: cut inside the "
+                                  "existing bore toward the chuck (VERIFY: "
+                                  "no proven reference on this machine)")
+                        ).ThreadInside = False
         obj.addProperty("App::PropertyBool", "BoreBackCut", "Cutting",
                         translate("Lathe", "bore ops: cut toward the face (+Z) "
                                   "instead of toward the chuck (-Z)")
@@ -174,8 +196,14 @@ class OpProxy:
             pair = pair.strip()
             if not pair:
                 continue
-            d_str, z_str = pair.split(",")[:2]
-            profile.append((float(d_str), float(z_str)))
+            parts = [p.strip() for p in pair.split(",")]
+            try:
+                d, z = float(parts[0]), float(parts[1])
+                r = float(parts[2]) if len(parts) > 2 and parts[2] else 0.0
+            except (ValueError, IndexError):
+                raise ValueError(f"ProfileString: bad entry '{pair}' "
+                                 "(expected 'D,Z' or 'D,Z,R')") from None
+            profile.append((d, z, r))
         return Op(
             type=s.OpType,
             tool=s.ToolName,
@@ -199,6 +227,9 @@ class OpProxy:
             thread_z_limit=float(getattr(s, "ThreadZLimit", 0.0)) or None,
             bore_back_cut=bool(getattr(s, "BoreBackCut", False)),
             profile=profile,
+            chamfer_start=float(getattr(s, "ChamferStart", 0.0) or 0.0),
+            chamfer_end=float(getattr(s, "ChamferEnd", 0.0) or 0.0),
+            thread_inside=bool(getattr(s, "ThreadInside", False)),
         )
 
     def __getstate__(self):
