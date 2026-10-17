@@ -6,7 +6,12 @@ Run: python3 tests/test_paths.py
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "LatheCAM"))
+_here = os.path.dirname(os.path.abspath(__file__))
+for _cand in (os.path.join(_here, "..", "LatheCAM"), os.path.dirname(_here)):
+    # dev layout: repo/LatheCAM/LatheCAM/pkg | release layout: repo/LatheCAM/pkg
+    if os.path.isfile(os.path.join(_cand, "LatheCAM", "__init__.py")):
+        sys.path.insert(0, _cand)
+        break
 
 from LatheCAM.model import Stock, Tool, Op, thread_depth, thread_passes
 from LatheCAM.paths import generate, Motion, check_collisions
