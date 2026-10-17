@@ -29,7 +29,8 @@ def motions_for_document(doc):
         raise ValueError("no Lathe::Setup object in document")
     if not ops:
         raise ValueError("no Lathe::Op objects in document")
-    tools = load_tools()
+    # same library resolution as post_document: Setup.ToolLibraryFile wins
+    tools = load_tools(str(getattr(setup, "ToolLibraryFile", "")).strip() or None)
     stock = setup.Proxy.to_stock()
     out = []
     for o in ops:
