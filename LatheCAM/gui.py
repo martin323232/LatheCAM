@@ -158,6 +158,8 @@ _TOOL_COLS = [
     ("Feed", "feed", "float"),
     ("Pitch", "thread_pitch", "float"),
     ("Z ref", "z_reference", "zref"),
+    ("Spindle", "spindle_dir", "dir"),
+    ("Note", "note", "str"),
 ]
 
 
@@ -190,10 +192,14 @@ class CmdToolLibrary:
 
         def fill(row, t):
             for col, (_hdr, attr, kind) in enumerate(_TOOL_COLS):
-                if kind in ("kind", "zref"):
+                if kind in ("kind", "zref", "dir"):
                     cb = QtWidgets.QComboBox()
-                    cb.addItems(["turn", "bore", "groove", "part", "thread"]
-                                if kind == "kind" else ["left", "right", "centre"])
+                    if kind == "kind":
+                        cb.addItems(["turn", "bore", "groove", "part", "thread"])
+                    elif kind == "zref":
+                        cb.addItems(["left", "right", "centre"])
+                    else:
+                        cb.addItems(["cw", "ccw"])
                     val = getattr(t, attr, "") if t else ""
                     idx = cb.findText(str(val))
                     cb.setCurrentIndex(max(idx, 0))
@@ -215,7 +221,8 @@ class CmdToolLibrary:
                                    "kind": "turn", "width": 3.0,
                                    "nose_radius": 0.4, "max_depth": 20.0,
                                    "rpm": 800.0, "feed": 0.15,
-                                   "thread_pitch": 0.0, "z_reference": "left"})())
+                                   "thread_pitch": 0.0, "z_reference": "left",
+                                   "spindle_dir": "cw", "note": ""})())
 
         def del_row():
             r = tbl.currentRow()
@@ -251,7 +258,7 @@ class CmdToolLibrary:
         for r in range(tbl.rowCount()):
             rec = {}
             for col, (_hdr, attr, kind) in enumerate(_TOOL_COLS):
-                if kind in ("kind", "zref"):
+                if kind in ("kind", "zref", "dir"):
                     rec[attr] = tbl.cellWidget(r, col).currentText()
                 else:
                     txt = (tbl.item(r, col).text() if tbl.item(r, col) else "").strip()

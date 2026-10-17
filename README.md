@@ -19,24 +19,45 @@ folder into Mod.)
 ## Workflow
 
 1. **Lathe Setup** — set stock diameter/length, bore (if any), RPM limit,
-   post options (CSS on/off, line numbers, tool changes).
+   post options (feed mode, CSS on/off, program number, tool changes).
 2. **Ops** — add operations (Face, OD rough/finish, ID rough/finish,
    Groove, Part, Thread). Each is a document object; edit parameters in the
    property view. `Order` controls execution sequence.
-3. **Tool library** — `LatheCAM/tool_library.json`; edit names, numbers,
-   widths, feeds, RPMs. `ToolName` on each op must match.
+3. **Tool library** — the **Tool Library** toolbar command edits names, T
+   numbers, geometry, cutting data, spindle direction and notes in a table
+   dialog (saved to your per-user `tools.json`). `examples/tools_masso_g3.json`
+   is a ready-made set matching the proven Masso G3 programs: copy it over
+   the per-user `tools.json`, or point `Setup.ToolLibraryFile` at it.
+   `ToolName` on each op must match a library entry.
 4. **Post (Masso G3)** — writes a `.nc` file.
 
 ## Conventions
 
+The post follows the conventions of a **proven** Masso G3 program (BobCAD-CAM
+post `Masso_G3_Lathe`, verified on the machine):
+
 - **X = diameter** (mm), X0 = centreline. **Z = 0 at the stock face**,
   negative into the stock (towards the chuck).
-- Default spindle/feed mode: `G97` fixed RPM + `G95` mm/rev (Masso uses
-  G95 for feed-per-rev — not G99). CSS (`G96 D<maxrpm> S<m/min>`) is
-  opt-in on the Setup object; Masso docs warn CSS+G95 don't mix, so the
-  post converts feed to mm/min in CSS mode.
-- Threading: `G32 Z.. F<pitch>` passes, progressive infeed (first 0.3 mm,
+- **Program**: first line `O0100` (`Setup.ProgramNumber`), start line
+  `G40 G18 G21 G90`. Optional cycle output (`Setup.CycleOutput`):
+  `M64 P<n>` after the first rapid, `M65 P<n>` at program end.
+- **Tool changes at machine home**: `M09`, `M05` (from the second change
+  on), `G53 G0 X0.`, `G53 G0 Z0.`, `T0008 M06` (4-digit tool number),
+  optional `M00 (LOAD T0008 <name>)` stop. Consecutive ops on the same tool
+  emit no change — only a speed change if the RPM differs. Program end:
+  `M09`, `M65 P<n>`, `M05`, home, `M30` — no final tool change.
+- **Spindle**: `G50 S<MaxRPM>` clamp, then one line `G97 S<rpm> M03` —
+  or `M04` for tools with `spindle_dir: ccw` (e.g. an upside-down boring
+  bar). CSS mode: `G50 S<MaxRPM>` then `G96 S<m/min> M03`.
+- **Feed mode** (`Setup.FeedMode`): default `mm_per_min` — `G94` with
+  `F = mm/rev × rpm` (e.g. 0.04 × 2500 → `F100.`), the mode the proven
+  file uses. `mm_per_rev` emits `G95` with F in mm/rev (untested on this
+  machine). Thread blocks always post `G97` + `G95` so the `G32` F word is
+  the pitch.
+- **Threading**: `G32 Z.. F<pitch>` passes, progressive infeed (first 0.3 mm,
   decreasing), optional spring pass. Spindle runs at fixed RPM.
+- Whole numbers keep the trailing dot (`X31.` `Z0.` `F100.`), like the
+  proven file.
 
 ## Safety
 
@@ -70,8 +91,13 @@ stays Masso's preview.
 
 ```
 python3 tests/test_paths.py            # pure-python core, no FreeCAD needed
+python3 tests/test_post.py             # v0.2.0 Masso conventions + reference regression
 freecadcmd tests/test_headless.py      # full addon (run from the repo root)
+freecadcmd tests/test_gui_sim.py       # workbench + commands, real exec semantics
 ```
+
+`tests/reference/drum_screw_magnet_nfc.nc` is the proven machine file the
+post conventions are regression-tested against.
 
 ## Example
 
@@ -89,6 +115,40 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.2.0
+
+Post output now matches the conventions of the user's **proven** Masso G3
+file (BobCAD-CAM `Masso_G3_Lathe`); every change is regression-tested
+against `tests/reference/drum_screw_magnet_nfc.nc`.
+
+- Program number line `O0100` (`Setup.ProgramNumber`) and start line
+  `G40 G18 G21 G90`.
+- Tool changes move to **machine home** first: `G53 G0 X0.` / `G53 G0 Z0.`
+  before every `T.. M06`; program end homes too and no longer emits a
+  final tool change.
+- Tool word is 4-digit zero-padded: `T0008 M06` (was `T08 M06`).
+- `G50 S<MaxRPM>` spindle clamp before each spindle start; `G97 S.. M03`
+  on one line; CSS drops the `D` word (`G50` is the clamp).
+- **Feed mode** `Setup.FeedMode`: `mm_per_min` (default, `G94`,
+  `F = mm/rev × rpm`) or `mm_per_rev` (`G95`). Thread blocks always post
+  `G97` + `G95` with `F` = pitch.
+- Tool library `spindle_dir`: `cw` (M03) or `ccw` (M04, e.g. upside-down
+  boring bar); editable in the Tool Library dialog, which also shows a
+  free-text `note` field.
+- Same-tool ops no longer re-home/re-index: spindle and coolant stay on,
+  only a speed change is emitted.
+- Optional cycle output: `Setup.CycleOutput` + `CycleOutputP` emit
+  `M64 P<n>` after the first rapid and `M65 P<n>` at the end.
+- Boring with `ZStart < 0` now rapids in inside the existing bore and
+  starts cutting exactly at `ZStart` (the bore mouth is no longer cut to
+  the pass diameter); the final retract lifts out at the enter diameter.
+- Facing allowance is part of the stock/collision model
+  (`Setup.FaceAllowance`, auto-raised to the largest face-op `FaceDepth`);
+  OD entry moves are lifted above it.
+- `examples/tools_masso_g3.json`: the user's real Masso G3 tool set
+  (T1 CCMT060208, T3 thread, T5 DCMT070204, T7 part, T8 CCGT boring ccw)
+  with `spindle_dir` and VERIFY notes.
 
 ### 0.1.9
 

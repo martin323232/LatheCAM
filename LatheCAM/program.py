@@ -64,9 +64,23 @@ def load_tools(path: str = None) -> Dict[str, Tool]:
     return tools
 
 
+def _stock_for(setup_obj, op_objs) -> "Stock":
+    """Build the Stock model, including the B3 facing allowance: material
+    exists from Z=0 up to the largest face-op FaceDepth (or the explicit
+    Setup.FaceAllowance), and the collision model must see it."""
+    stock = setup_obj.Proxy.to_stock()
+    fa = float(getattr(setup_obj, "FaceAllowance", 0.0) or 0.0)
+    for o in op_objs:
+        op = o.Proxy.to_op()
+        if op.type == "face":
+            fa = max(fa, op.face_depth)
+    stock.face_allowance = fa
+    return stock
+
+
 def build_blocks(setup_obj, op_objs, tools: Dict[str, Tool]) -> List[Block]:
     from .objects import SetupProxy, OpProxy  # local import: avoid cycles
-    stock = setup_obj.Proxy.to_stock()
+    stock = _stock_for(setup_obj, op_objs)
     blocks = []
     for o in op_objs:
         op = o.Proxy.to_op()
@@ -79,7 +93,8 @@ def build_blocks(setup_obj, op_objs, tools: Dict[str, Tool]) -> List[Block]:
         block = Block(f"{o.Label} [{op.type}]", tool.tool_number, rpm, moves,
                       rpm_ceiling=stock.max_rpm,
                       surface_speed=float(getattr(setup_obj, "SurfaceSpeed", 150.0)),
-                      tool_name=tool.name)
+                      tool_name=tool.name,
+                      spindle_dir=getattr(tool, "spindle_dir", "cw"))
         block.op_type = op.type
         block.tool_kind = tool.kind
         block.tool_width = tool.width
@@ -102,7 +117,7 @@ def post_document(doc, filename: str = None) -> str:
         raise ValueError("no Lathe::Op objects in document")
     tools = load_tools(str(getattr(setup, "ToolLibraryFile", "")).strip() or None)
     blocks = build_blocks(setup, ops, tools)
-    stock = setup.Proxy.to_stock()
+    stock = _stock_for(setup, ops)
     checker = CollisionChecker(stock)
     for b in blocks:
         kind = getattr(b, "tool_kind", "turn")
@@ -120,6 +135,10 @@ def post_document(doc, filename: str = None) -> str:
         line_numbers=bool(getattr(setup, "LineNumbers", False)),
         tool_change=bool(getattr(setup, "ToolChange", False)),
         tool_change_prompt=bool(getattr(setup, "ToolChangePrompt", True)),
+        feed_mode=str(getattr(setup, "FeedMode", "mm_per_min") or "mm_per_min"),
+        program_number=int(getattr(setup, "ProgramNumber", 100)),
+        cycle_output=bool(getattr(setup, "CycleOutput", False)),
+        cycle_output_p=int(getattr(setup, "CycleOutputP", 1) or 1),
     )
     if filename:
         with open(filename, "w", encoding="utf-8") as f:

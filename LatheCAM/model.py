@@ -18,12 +18,15 @@ class Stock:
     max_rpm: float = 3000.0         # spindle limit
     safe_x_clearance: float = 4.0   # rapid X clearance beyond stock dia (dia mm)
     safe_z_clearance: float = 2.0   # rapid Z clearance in front of face
+    # B3: uncut facing allowance in front of Z0 (material from Z=0 up to
+    # Z=face_allowance exists and the collision model must see it).
+    face_allowance: float = 0.0
 
     def safe_x(self) -> float:
         return self.diameter + self.safe_x_clearance
 
     def safe_z(self) -> float:
-        return self.safe_z_clearance
+        return self.face_allowance + self.safe_z_clearance
 
 
 @dataclass
@@ -43,6 +46,11 @@ class Tool:
     # The op Z is the nominal cut CENTRE; the programmed Z is shifted so the
     # kerf stays centred there given this corner.
     z_reference: str = "left"
+    # A5: spindle direction for this tool: "cw" -> M03, "ccw" -> M04
+    # (e.g. a boring bar mounted upside down runs M04).
+    spindle_dir: str = "cw"
+    # free-text note shown in the Tool Library dialog (e.g. "VERIFY")
+    note: str = ""
 
     @staticmethod
     def default_library() -> List["Tool"]:

@@ -6,7 +6,7 @@ Run: python3 tests/test_paths.py
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "LatheCAM"))
 
 from LatheCAM.model import Stock, Tool, Op, thread_depth, thread_passes
 from LatheCAM.paths import generate, Motion, check_collisions
@@ -68,9 +68,11 @@ def test_full_program():
     check("Z within limits", min(zs) >= -60 and max(zs) <= 6.0, f"min={min(zs)} max={max(zs)}")
     check("no negative X", min(xs) >= 0.0)
 
-    # gcode structure
-    check("starts G21", "G21" in gcode.splitlines()[0] or "G21" in gcode[:200])
-    check("G95 feed mode", "G95" in gcode)
+    # gcode structure (v0.2.0: O-header + reference start line, mm/min default)
+    check("O0100 present", "O0100" in gcode)
+    check("start line G40 G18 G21 G90", "G40 G18 G21 G90" in gcode)
+    check("G94 feed mode (mm/min default)", "G94" in gcode)
+    check("G95 in thread block", "G95" in gcode)
     check("G97 rpm mode", "G97 S" in gcode)
     check("ends M30", gcode.strip().endswith("M30"))
     check("spindle M03", "M03" in gcode)
@@ -93,8 +95,9 @@ def test_full_program():
 
     # part-off reaches centre
     part_lines = [l for l in gcode.splitlines() if "part X" in l]
-    check("part reaches X0", any("X0 " in l or "X0\n" in l or l.endswith("X0") for l in part_lines)
-          or "X0 " in gcode, "no X0 plunge found")
+    check("part reaches X0", any("X0 " in l or "X0." in l or l.endswith("X0.")
+                                 for l in part_lines)
+          or "X0." in gcode, "no X0 plunge found")
 
     # bore ops
     stock2 = Stock(diameter=30.0, length=40.0, bore_diameter=10.0)
@@ -115,7 +118,7 @@ def test_css_mode():
     moves = generate(op, tl["OD-finish"], stock)
     blk = [Block("css", 2, 1200, moves, rpm_ceiling=3000, surface_speed=150)]
     g = post_program(blk, css=True)
-    check("css emits G96 D S", "G96 D3000 S150" in g)
+    check("css emits G50 clamp + G96", "G50 S3000" in g and "G96 S150 M03" in g)
     check("css feed mode G94", "G94" in g)
 
 
@@ -161,7 +164,8 @@ def test_post_dialect():
     blocks = [Block("finish", 2, 1200, mv_fin), Block("thread", 6, 250, mv_thr)]
     g = post_program(blocks, css=True)   # CSS on: thread block must still be G97+G95
     lines = g.splitlines()
-    check("safe_start has G18", lines[0].startswith("G21 G90 G18"), lines[0])
+    check("O0100 first line", lines[0] == "O0100", lines[0])
+    check("start line reference order", lines[1] == "G40 G18 G21 G90", lines[1])
     check("M05 emitted once", g.count("M05") == 1, f"count={g.count('M05')}")
     check("coolant M08/M09", "M08" in g and "M09" in g)
     thr_idx = next(i for i, l in enumerate(lines) if l.startswith("G32"))
@@ -193,16 +197,16 @@ def test_review_round2():
     b2 = Block("(op2)", 5, 400, mv2, tool_name="Part 2mm")
     g = post_program([b1, b2], tool_change=True)
     lines = g.splitlines()
-    i_m03 = [i for i, l in enumerate(lines) if l == "M03"][1]   # op2 spindle on
+    i_m03 = [i for i, l in enumerate(lines) if l.endswith("M03")][1]   # op2 spindle on
     seg = lines[:i_m03]
     i_m09 = max(i for i, l in enumerate(seg) if l == "M09")
     i_m05 = max(i for i, l in enumerate(seg) if l == "M05")
-    i_t = max(i for i, l in enumerate(seg) if l.startswith("T05 M06"))
+    i_t = max(i for i, l in enumerate(seg) if l.startswith("T0005 M06"))
     i_m00 = max(i for i, l in enumerate(seg) if l.startswith("M00"))
-    check("R2: M09 -> M05 -> T05 M06 -> M00 -> M03 order",
+    check("R2: M09 -> M05 -> T0005 M06 -> M00 -> M03 order",
           i_m09 < i_m05 < i_t < i_m00 < i_m03,
           f"{i_m09},{i_m05},{i_t},{i_m00},{i_m03}")
-    check("R2: M00 names the tool", "M00 (LOAD T05 Part 2mm)" in g)
+    check("R2: M00 names the tool", "M00 (LOAD T0005 Part 2mm)" in g)
     check("R2: no M01 anywhere", "M01" not in g)
 
     # R3: wide groove (multi-centre) rapids straight out between centres
@@ -286,7 +290,7 @@ def test_tool_library():
                    tl["Part 2mm"], stock)
     g = post_program([Block("(op1)", 2, 1200, mv1), Block("(op2)", 5, 400, mv2)],
                      tool_change=True, tool_change_prompt=False)
-    check("prompt off: T.. M06 kept", "T05 M06" in g)
+    check("prompt off: T.. M06 kept", "T0005 M06" in g)
     check("prompt off: no M00", "M00" not in g)
 
     # user library: override built-in by name + add a custom tool

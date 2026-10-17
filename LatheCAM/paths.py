@@ -41,6 +41,16 @@ def _retract(stock: Stock) -> List[Motion]:
     return [Motion("rapid", stock.safe_x(), stock.safe_z(), note="retract safe")]
 
 
+def _entry_z(stock: Stock, z: float) -> float:
+    """Entry Z for an OD op starting at nominal Z: keep the entry point out
+    of the facing allowance slab (B3) — if it would land inside the slab,
+    lift it above the allowance instead."""
+    ze = z + stock.safe_z_clearance
+    if 0 < ze <= stock.face_allowance:
+        ze = stock.face_allowance + stock.safe_z_clearance
+    return ze
+
+
 def _z_offset(tool: Tool, w: float) -> float:
     """Z shift so the kerf stays centred on the nominal op Z given where the
     machine offset is measured (tool.z_reference: left = chuck-side corner,
@@ -94,8 +104,8 @@ def od_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     final = op.target_diameter + 2 * op.stock_to_leave
     # mid-length start: plunge exactly at z_start so material in front of it
     # (a collar that must keep its stock diameter) is never touched; a face
-    # start enters in the air in front of the face
-    z_entry = op.z_start if op.z_start < 0 else op.z_start + clr
+    # start enters in the air in front of the face (above any facing allowance)
+    z_entry = op.z_start if op.z_start < 0 else _entry_z(stock, op.z_start)
     entry_kind = "feed" if z_entry < 0 else "rapid"
 
     def pass_at(d: float, label: str) -> List[Motion]:
@@ -126,7 +136,7 @@ def od_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     pts = op.profile or [(op.target_diameter, op.z_start),
                          (op.target_diameter, op.z_end)]
     d0, z0 = pts[0]
-    z_entry = z0 + stock.safe_z_clearance
+    z_entry = _entry_z(stock, z0)
     m.append(Motion("rapid", stock.safe_x(), stock.safe_z()))
     m.append(Motion("rapid", stock.safe_x(), z_entry))
     # if the entry point is axially inside the stock, plunge radially on feed
@@ -152,8 +162,14 @@ def id_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     m = _approach(stock)
     feed = _feed(op, tool)
     enter = max(stock.bore_diameter - 1.0, 1.0)
-    z_in = op.z_start + stock.safe_z_clearance
-    z_entry = min(z_in, 0.0)          # plunge into the bore mouth at enter X
+    if op.z_start < 0:
+        # B1: z_start is inside the existing bore: rapid in at the enter
+        # diameter and start cutting exactly at z_start. Material between
+        # the face and z_start must keep its diameter.
+        z_in = z_entry = op.z_start
+    else:
+        z_in = op.z_start + stock.safe_z_clearance
+        z_entry = 0.0              # plunge into the bore mouth at enter X
     final = op.target_diameter - 2 * op.stock_to_leave
     if op.bore_back_cut:
         z_from, z_to = op.z_end, z_entry   # cut toward the face (+Z)
@@ -184,6 +200,9 @@ def id_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
             m.append(Motion("rapid", enter, z_from, 0, "return to entry"))
     if abs(z_to - z_entry) > 1e-9:
         m.append(Motion("rapid", enter, z_entry, 0, "withdraw in bore"))
+    # B2: lift out of the hole at the enter diameter FIRST, then move out
+    # in X; a diagonal retract from inside the bore cuts the bore mouth wall.
+    m.append(Motion("rapid", enter, stock.safe_z(), 0, "lift out at enter dia"))
     m += _retract(stock)
     return m
 
@@ -194,8 +213,12 @@ def id_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     m = _approach(stock)
     feed = _feed(op, tool)
     enter = max(stock.bore_diameter - 1.0, 1.0)
-    z_in = op.z_start + stock.safe_z_clearance
-    z_entry = min(z_in, 0.0)
+    if op.z_start < 0:
+        # B1: rapid in inside the existing bore, cut starts at z_start
+        z_in = z_entry = op.z_start
+    else:
+        z_in = op.z_start + stock.safe_z_clearance
+        z_entry = 0.0
     if op.bore_back_cut:
         z_from, z_to = op.z_end, z_entry
     else:
@@ -213,6 +236,8 @@ def id_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     m.append(Motion("rapid", enter, z_to, 0, "collapse in bore"))
     if abs(z_to - z_entry) > 1e-9:
         m.append(Motion("rapid", enter, z_entry, 0, "withdraw in bore"))
+    # B2: lift out at the enter diameter before moving out in X
+    m.append(Motion("rapid", enter, stock.safe_z(), 0, "lift out at enter dia"))
     m += _retract(stock)
     return m
 
@@ -358,7 +383,10 @@ class CollisionChecker:
         self.stock = stock
         self.tol = tol
         self.dz = dz
-        self.nb = int(stock.length / dz) + 2
+        # B3: material exists from Z=+face_allowance down to -length; the
+        # bucket grid starts at the top of that allowance.
+        self.fa = max(stock.face_allowance, 0.0)
+        self.nb = int((stock.length + self.fa) / dz) + 2
         self.core = [stock.diameter] * self.nb
         self.hole = [stock.bore_diameter] * self.nb
         self.problems: List[str] = []
@@ -368,10 +396,12 @@ class CollisionChecker:
         self.zref = "centre"
 
     def _bucket(self, z: float) -> int:
-        return int(-z / self.dz) + 1
+        return int((self.fa - z) / self.dz) + 1
 
     def _buckets(self, z: float):
         """Bucket indices covered by the tool kerf at programmed Z."""
+        if z > self.fa + 1e-9:
+            return ()          # air in front of the face / facing allowance
         w = self.width
         if w <= 1e-9:
             lo = hi = z
@@ -382,7 +412,7 @@ class CollisionChecker:
         else:
             lo, hi = z - w / 2.0, z + w / 2.0
         lo = max(lo, -self.stock.length)
-        hi = min(hi, 0.0)
+        hi = min(hi, self.fa)
         if lo > hi:
             return ()
         return range(self._bucket(hi), self._bucket(lo) + 1)

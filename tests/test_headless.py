@@ -4,10 +4,7 @@ Simulates an installed addon: Mod/LatheCAM on MOD_PATH, build a document
 with Setup + Ops via the object proxies, post to file, verify G-code.
 """
 
-import os
 import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import FreeCAD
 
@@ -83,7 +80,8 @@ lines = gcode.splitlines()
 
 check("gcode written", len(lines) > 50, f"{len(lines)} lines")
 check("G21 present", any("G21" in l for l in lines))
-check("G95 present", any("G95" in l for l in lines))
+check("G94 present (mm/min default)", any("G94" in l for l in lines))
+check("O0100 header", any(l == "O0100" for l in lines[:5]), lines[0])
 check("G32 threading", any(l.startswith("G32") for l in lines))
 check("M30 end", lines[-1] == "M30")
 check("op comments present", sum(1 for l in lines if l.startswith("(")) >= 6)

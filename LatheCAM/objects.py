@@ -52,6 +52,11 @@ class SetupProxy:
                         translate("Lathe", "Length from face into waste")).StockLength = 60.0
         obj.addProperty("App::PropertyLength", "BoreDiameter", "Stock",
                         translate("Lathe", "Pre-drilled bore (0 = solid)")).BoreDiameter = 0.0
+        obj.addProperty("App::PropertyLength", "FaceAllowance", "Stock",
+                        translate("Lathe", "Uncut facing allowance in front of "
+                                  "Z0 (auto-raised to the largest face-op "
+                                  "FaceDepth; collision model sees this material)")
+                        ).FaceAllowance = 0.0
         obj.addProperty("App::PropertyFloat", "MaxRPM", "Machine",
                         translate("Lathe", "Spindle RPM limit")).MaxRPM = 3000.0
         obj.addProperty("App::PropertyFloat", "SurfaceSpeed", "Machine",
@@ -71,6 +76,24 @@ class SetupProxy:
                                   "the built-in set (per-user tools.json is "
                                   "layered on top unless this is set)")
                         ).ToolLibraryFile = ""
+        obj.addProperty("App::PropertyEnumeration", "FeedMode", "Post",
+                        translate("Lathe", "Feed mode: mm_per_min = G94 with "
+                                  "F in mm/min (proven on Masso G3); "
+                                  "mm_per_rev = G95 with F in mm/rev "
+                                  "(UNTESTED on this machine)")
+                        ).FeedMode = ["mm_per_min", "mm_per_rev"]
+        obj.FeedMode = "mm_per_min"
+        obj.addProperty("App::PropertyInteger", "ProgramNumber", "Post",
+                        translate("Lathe", "Program number -> first line "
+                                  "O0100")).ProgramNumber = 100
+        obj.addProperty("App::PropertyBool", "CycleOutput", "Post",
+                        translate("Lathe", "Emit M64 P<n> after the first "
+                                  "rapid and M65 P<n> at program end (chip "
+                                  "conveyor / coolant pump interlock)")
+                        ).CycleOutput = False
+        obj.addProperty("App::PropertyInteger", "CycleOutputP", "Post",
+                        translate("Lathe", "P word for M64/M65 cycle output")
+                        ).CycleOutputP = 1
         obj.addProperty("App::PropertyPlacement", "ViewPlacement", "View",
                         translate("Lathe", "Placement of visualization/simulation "
                                   "objects in the model (lathe Z = spindle axis)")
