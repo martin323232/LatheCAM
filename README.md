@@ -65,7 +65,12 @@ post `Masso_G3_Lathe`, verified on the machine):
   compensation — `G42` before the first cut, `G40` before rapids. VERIFY:
   the G41/G42 side convention on Masso is unproven; the proven file is
   post-side compensated instead. The collision checker stays conservative
-  when this is on.
+  when this is on. Note: BobCAD compensates for the nose radius in the
+  CAM path itself (the `R.397` corner arcs in the proven file are the
+  1/64" nose radius from the BobCAD tool database). LatheCAM's NoseComp
+  instead emits `G42`/`G40` and relies on the controller, which needs the
+  nose radius and tip direction set in the Masso tool table. Not proven
+  on this machine — keep the default `False` until a dry-run confirms it.
 - **Internal threads** (`Op.ThreadInside`): cut inside the existing bore
   toward the chuck, `G97`+`G95`, retract at minor dia. VERIFY — no proven
   reference program covers internal threading on this machine; dry-run
@@ -110,8 +115,12 @@ freecadcmd tests/test_headless.py      # full addon (run from the repo root)
 freecadcmd tests/test_gui_sim.py       # workbench + commands, real exec semantics
 ```
 
-`tests/reference/drum_screw_magnet_nfc.nc` is the proven machine file the
-post conventions are regression-tested against.
+`tests/reference/drum_screw_magnet_nfc.nc` is the **only** reference
+confirmed to have run on the Masso G3; the post conventions are
+regression-tested against it. Everything in `tests/reference/unverified/`
+is BobCAD output that has **not** been confirmed to run on the machine —
+the control-line checks over those files are structure checks, not
+ground truth.
 
 ## Example
 
@@ -129,6 +138,31 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.1
+
+- **id_finish profiles (A)**: `id_finish` accepts the same
+  `ProfileString` as `od_finish` (`D,Z[,R];`, same arc sign rule). Entry:
+  face start = rapid to (d0, safe Z) then feed in; buried start = rapid
+  in at the enter diameter, feed out at Z. Exit: feed in to
+  `x_out = min(profile diams, bore) - 1` (≥ 0.5), lift out **axially**
+  through the bore, then rapid out in X — never an X+Z move below the
+  face except profile cuts. id_finish blocks are collision-checked with
+  the boring (inner-material) model.
+- **od_finish exit (B)**: radial clear at the last Z, then axial
+  withdraw — the old diagonal rapid (X and Z at once below the face) is
+  gone.
+- **Benchmark rewritten honestly (C)**: `drum_screw_magnet_nfc.nc` is an
+  internal boring pass; the benchmark now builds it as an `id_finish`
+  op, runs it through the same `CollisionChecker` `post_document` uses
+  (boring=True), and checks the exit order (axial before radial).
+  13/13 cutting moves still match. The profile is transcribed from the
+  BobCAD output — the match proves post formatting and path discipline,
+  not geometry generation.
+- **Reference labelling (D)**: `drum_screw_magnet_nfc.nc` is the only
+  machine-proven reference; the other BobCAD files moved to
+  `tests/reference/unverified/` (structure checks only). `Part1.nc`
+  (empty) and `aa.nc` (conflicting `T0101` tool word) deleted.
 
 ### 0.3.0
 
@@ -148,8 +182,9 @@ writes `demo.nc`.
   bore toward the chuck.
 - **Number format**: values below 1 drop the leading zero (`Z-.166`,
   `R.397`, `F.381`) — byte-matching the proven file's style.
-- **References (D)**: all 11 machine-run BobCAD programs live in
-  `tests/reference/`; control-line order is regression-tested.
+- **References (D)**: BobCAD programs live in `tests/reference/`
+  (relabelled in 0.3.1: only `drum_screw_magnet_nfc.nc` is machine-proven,
+  the rest are in `unverified/`); control-line order is regression-tested.
 - **Benchmark**: `examples/benchmark_drum_screw.py` reproduces the proven
   `drum_screw_magnet_nfc.nc` finish pass — 13/13 cutting moves match
   (including the four `R.397` arcs) and the control lines post in proven

@@ -56,7 +56,7 @@ G0 X48. Z4.
 G1 X48. Z0. F120.
 G1 X50. Z-1. F120.
 G1 X50. Z-20. F120.
-G0 X54. Z-20.
+G0 X56. Z-20.
 G0 X56. Z4.
 (Op: id_rough [id_rough])
 M09

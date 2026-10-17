@@ -457,9 +457,14 @@ def test_n_nosecomp():
           max(i for i, l in enumerate(g_on) if l == "G40") > last_g1)
 
 
-def test_d_proven_references():
-    """D: control-line order of the proven BobCAD programs (all machine-run)."""
-    ref_dir = os.path.join(os.path.dirname(__file__), "reference")
+def test_d_unverified_references():
+    """D: control-line order of the BobCAD programs in reference/unverified/.
+
+    These files have NOT been confirmed to run on the machine (only
+    drum_screw_magnet_nfc.nc is machine-proven). The checks below are
+    structure checks on BobCAD output, not ground truth."""
+    ref_dir = os.path.join(os.path.dirname(__file__), "reference",
+                           "unverified")
     cases = {
         "b.nc": ["O0100", "G40 G18 G21 G90", "G53 G0 X0.", "G53 G0 Z0.",
                  "T0003 M06", "G50 S200", "G97 S200 M03", "M08", "M64 P1",
@@ -527,7 +532,7 @@ if __name__ == "__main__":
     test_c_chamfer()
     test_a_arcs()
     test_n_nosecomp()
-    test_d_proven_references()
+    test_d_unverified_references()
     test_e_thread_inside()
     print(f"\n{len(FAILED)} failed: {FAILED}" if FAILED else "\nALL TESTS PASSED")
     sys.exit(1 if FAILED else 0)

@@ -133,7 +133,7 @@ class Op:
         if self.type in ("id_rough", "id_finish"):
             if stock.bore_diameter <= 0:
                 raise ValueError("stock has no bore (set bore_diameter)")
-            if self.target_diameter <= stock.bore_diameter:
+            if not self.profile and self.target_diameter <= stock.bore_diameter:
                 raise ValueError("id target must be > bore_diameter")
         if self.type == "thread":
             if self.thread_pitch <= 0:

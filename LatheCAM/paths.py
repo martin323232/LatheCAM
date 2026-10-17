@@ -212,8 +212,8 @@ def od_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
         else:
             m.append(Motion("feed", d, z, feed, "profile"))
         prev = (d, z)
-    m.append(Motion("rapid", min(pts[-1][0] + 4, stock.safe_x()), pts[-1][1], 0, "clear"))
-    m += _retract(stock)
+    m.append(Motion("rapid", stock.safe_x(), pts[-1][1], 0, "clear radially"))
+    m.append(Motion("rapid", stock.safe_x(), stock.safe_z(), 0, "withdraw"))
     return m
 
 
@@ -275,11 +275,58 @@ def id_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
 
 
 def id_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
-    """Single finishing bore pass to target diameter, cutting toward the
-    chuck (-Z; +Z when bore_back_cut)."""
+    """Single finishing bore pass.
+
+    With a profile (same D,Z[,R] format as od_finish; R>0 -> G02, R<0 ->
+    G03) the tool follows the profile inside the bore. Entry and exit keep
+    the boring discipline: no move changes X and Z at the same time while
+    Z < 0 except the profile cut moves — the tool always withdraws
+    axially through the bore before moving out in X.
+
+    Empty profile = single bore pass to target_diameter, cutting toward
+    the chuck (-Z; +Z when bore_back_cut)."""
     m = _approach(stock)
     feed = _feed(op, tool)
     enter = max(stock.bore_diameter - 1.0, 1.0)
+    if op.profile:
+        pts = [(p[0], p[1], p[2] if len(p) > 2 else 0.0) for p in op.profile]
+        d0, z0, _ = pts[0]
+        m.append(Motion("rapid", stock.safe_x(), stock.safe_z()))
+        if z0 >= 0:
+            # starts at the face: rapid in at the first profile diameter
+            m.append(Motion("rapid", d0, stock.safe_z()))
+            m.append(Motion("feed", d0, z0, feed, "engage at face"))
+        else:
+            # starts inside the existing bore: rapid in at enter dia
+            m.append(Motion("rapid", enter, stock.safe_z()))
+            m.append(Motion("rapid", enter, z0))
+            m.append(Motion("feed", d0, z0, feed, "feed out to profile start"))
+        prev = (d0, z0)
+        for d, z, r in pts[1:]:
+            if abs(r) > 1e-9:
+                chord = math.hypot((d - prev[0]) / 2.0, z - prev[1])
+                if abs(r) < chord / 2.0 - 1e-9:
+                    raise ValueError(
+                        f"arc R={abs(r)} too small for chord {chord:.3f} "
+                        f"(X{prev[0]} Z{prev[1]} -> X{d} Z{z})")
+                m.append(Motion("cw" if r > 0 else "ccw", d, z, feed,
+                                "profile arc", radius=r))
+            else:
+                m.append(Motion("feed", d, z, feed, "profile"))
+            prev = (d, z)
+        dN, zN = pts[-1][0], pts[-1][1]
+        # exit: pull in to a diameter that clears the bore, lift out
+        # axially through it, only then move out in X
+        pool = [p[0] for p in pts]
+        if stock.bore_diameter > 0:
+            pool.append(stock.bore_diameter)
+        x_out = max(min(pool) - 1.0, 0.5)
+        if dN > x_out + 1e-9:
+            m.append(Motion("feed", x_out, zN, feed, "retract inward"))
+        m.append(Motion("rapid", x_out, stock.safe_z(), 0,
+                        "lift out through bore"))
+        m.append(Motion("rapid", stock.safe_x(), stock.safe_z(), 0, "clear"))
+        return m
     if op.z_start < 0:
         # B1: rapid in inside the existing bore, cut starts at z_start
         z_in = z_entry = op.z_start

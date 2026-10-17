@@ -361,6 +361,101 @@ def test_arc_collision_clean():
     check("A4: arc path collision-free", not probs, str(probs))
 
 
+DRUM_PROFILE = [(16.815, 0), (16.482, -0.166), (16.25, -0.447, 0.397),
+                (16.25, -5.55), (15.913, -5.55), (15.444, -5.627, 0.397),
+                (15.309, -5.676), (14.994, -5.936, 0.397), (11, -18.917),
+                (11, -20.65), (7.194, -20.65), (6.808, -20.7, 0.397),
+                (6.101, -20.346)]
+
+
+def _diagonal_rapids(mv):
+    """Rapids that change X and Z at the same time while Z < 0."""
+    bad = []
+    prev = mv[0]
+    for mo in mv[1:]:
+        if (mo.kind == "rapid" and abs(mo.x - prev.x) > 1e-9
+                and abs(mo.z - prev.z) > 1e-9 and (prev.z < 0 or mo.z < 0)):
+            bad.append((prev.x, prev.z, mo.x, mo.z))
+        prev = mo
+    return bad
+
+
+def test_v031_id_finish_profile():
+    """v0.3.1 A: id_finish follows a profile; boring entry/exit discipline."""
+    stock = Stock(diameter=18.0, length=33.0, bore_diameter=6.0)
+    tool = Tool(name="CCGT boring", tool_number=8, kind="bore", rpm=2000,
+                feed=0.025)
+    op = Op("id_finish", "CCGT boring", "drum screw bore", z_start=0.0,
+            z_end=-20.7, profile=DRUM_PROFILE)
+    mv = generate(op, tool, stock)
+    check("A5: profile arcs present (4)",
+          sum(1 for m in mv if m.kind in ("cw", "ccw")) == 4)
+    check("A5: no diagonal rapid at Z<0", not _diagonal_rapids(mv),
+          str(_diagonal_rapids(mv)))
+    problems = check_collisions(mv, stock, boring=True)
+    check("A5: check_collisions boring=True clean", problems == [],
+          str(problems))
+    # exit: feed to x_out at zN (x_out = min(6.101, 6.0) - 1 = 5.0),
+    # then G0 Z safe_z at x_out, then G0 X safe_x
+    i = max(i for i, m in enumerate(mv) if m.kind in ("feed", "cw", "ccw"))
+    tail = mv[i]
+    check("A5: retract feed to x_out at zN",
+          abs(tail.x - 5.0) < 1e-9 and abs(tail.z + 20.346) < 1e-9,
+          f"{tail.x},{tail.z}")
+    after = [m for m in mv[i + 1:] if m.kind == "rapid"]
+    check("A5: axial lift out at x_out first",
+          after and after[0].x == 5.0 and after[0].z == stock.safe_z(),
+          str(after[:2]))
+    check("A5: then rapid out in X",
+          len(after) > 1 and after[1].x == stock.safe_x()
+          and after[1].z == stock.safe_z(), str(after[:2]))
+    # entry at the face (z0 = 0): rapid to (d0, safe_z) then feed to (d0, 0)
+    head = [m for m in mv if m.kind == "rapid"][:3]
+    check("A5: face entry rapid to d0 at safe_z",
+          any(m.x == 16.815 and m.z == stock.safe_z() for m in head),
+          str(head))
+    first_feed = [m for m in mv if m.kind == "feed"][0]
+    check("A5: face entry feeds to (d0, z0)",
+          first_feed.x == 16.815 and first_feed.z == 0.0)
+    # z0 < 0 entry: rapid in at enter dia, feed out to profile start
+    op2 = Op("id_finish", "CCGT boring", "bore bottom", z_start=-5.0,
+             z_end=-20.7, profile=[(11.0, -5.0), (11.0, -20.65),
+                                   (6.101, -20.346)])
+    mv2 = generate(op2, tool, stock)
+    feeds2 = [m for m in mv2 if m.kind == "feed"]
+    check("A5: buried entry feeds out at z0",
+          feeds2 and feeds2[0].x == 11.0 and feeds2[0].z == -5.0,
+          str(feeds2[0] if feeds2 else None))
+    rap2 = [m for m in mv2 if m.kind == "rapid"]
+    check("A5: buried entry rapids in at enter dia",
+          any(m.x == 5.0 and m.z == -5.0 for m in rap2), str(rap2[:4]))
+    check("A5: buried entry no diagonal rapid",
+          not _diagonal_rapids(mv2), str(_diagonal_rapids(mv2)))
+    check("A5: buried entry collisions clean",
+          check_collisions(mv2, stock, boring=True) == [])
+
+
+def test_v031_od_finish_exit():
+    """v0.3.1 B: od_finish exit is radial-then-axial, never a diagonal."""
+    stock = Stock(diameter=24.0, length=30.0)
+    tool = Tool(name="OD-finish", tool_number=2, kind="turn", rpm=1200,
+                feed=0.1)
+    op = Op("od_finish", "OD-finish", "steps", z_start=0.0, z_end=-20.0,
+            target_diameter=16.0,
+            profile=[(20.0, 0.0), (20.0, -10.0), (16.0, -10.0),
+                     (16.0, -20.0)])
+    mv = generate(op, tool, stock)
+    bad = _diagonal_rapids(mv)
+    check("B2: no diagonal rapid at Z<0", not bad, str(bad))
+    check("B2: check_collisions clean",
+          check_collisions(mv, stock) == [])
+    rapids = [m for m in mv if m.kind == "rapid"]
+    check("B2: radial clear at zN then axial",
+          rapids[-2].x == stock.safe_x() and rapids[-2].z == -20.0
+          and rapids[-1].x == stock.safe_x()
+          and rapids[-1].z == stock.safe_z(), str(rapids[-2:]))
+
+
 def test_nose_offset():
     """N2: with nose comp the checker records material conservatively."""
     from LatheCAM.paths import CollisionChecker
@@ -383,6 +478,8 @@ if __name__ == "__main__":
     test_tool_library()
     test_arc_samples()
     test_arc_collision_clean()
+    test_v031_id_finish_profile()
+    test_v031_od_finish_exit()
     test_nose_offset()
     print("\n--- sample gcode (first 40 lines) ---")
     print("\n".join(gcode.splitlines()[:40]))
