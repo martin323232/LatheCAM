@@ -2,7 +2,7 @@
   "metadata": {
     "name": "LatheCAM",
     "version": "0.1.9",
-    "date": "2026-10-13",
+    "date": "2026-10-17",
     "url": "https://github.com/martin323232",
     "icon": "LatheCAM.svg",
     "description": "Turning CAM for FreeCAD 1.x: facing, OD/ID rough+finish, grooving, part-off, G32 threading. Masso G3 post-processor.",
