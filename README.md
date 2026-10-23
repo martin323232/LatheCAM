@@ -92,8 +92,9 @@ hand on feed hold.
 
 - **Show toolpaths** — rapids (red dashed), feed cuts (green), stock
   (translucent) drawn on the setup axis.
-- **Simulate** — computes the finished part from the toolpath (revolved
-  min-radius envelope) and animates the tool along the program.
+- **Simulate** — computes the finished part from the toolpath (OD cuts
+  shrink the outer envelope, boring grows the bore — the result is the
+  annulus between them) and animates the tool along the program.
 
 Both are approximations for sanity-checking; the authoritative verification
 stays Masso's preview.
@@ -138,6 +139,21 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.2
+
+- **Sim understands ID vs OD**: the material model is now dual-profile —
+  OD moves leave the smallest radius reached at each Z (unchanged), while
+  boring moves GROW the bore (largest radius reached, starting from the
+  pre-drilled bore). A bored part now simulates as a tube, not a solid
+  plug of the bore profile. Internal-thread ops count as boring.
+- Fixed the sim solid being `isValid() == False`: the envelope polygon
+  was never closed (`Part.makePolygon` does not auto-close), which also
+  skewed the revolved volume.
+- Test-suite fix: the headless suite had been aborting mid-file since
+  v0.3.1 (invalid test arc `R0.4` on a 20 mm chord tripped the new arc
+  validator; the runner grep missed the abort). Test profile now uses a
+  valid R0.4 corner fillet; the runner checks the exit code.
 
 ### 0.3.1
 

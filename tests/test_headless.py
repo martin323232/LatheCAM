@@ -96,14 +96,15 @@ except ValueError as e:
     check("bad tool raises", "nonexistent" in str(e))
 doc.removeObject(bad.Name)  # keep doc postable for the vis test below
 
-# ProfileString parsing (od_finish stepped profile)
+# ProfileString parsing (od_finish stepped profile, R0.4 corner fillet:
+# chord 0.566 <= 2R so the arc validator accepts it)
 prof_op = objects.create_op(doc, "od_finish")
-prof_op.ProfileString = "15,0; 15,-25; 25,-25; 25,-45,0.4"
+prof_op.ProfileString = "15,0; 15,-25; 24.2,-25; 25,-25.4,0.4; 25,-45"
 doc.recompute()
 pv = prof_op.Proxy.to_op().profile
 check("ProfileString parsed (D,Z[,R] triples)",
-      pv == [(15.0, 0.0, 0.0), (15.0, -25.0, 0.0),
-             (25.0, -25.0, 0.0), (25.0, -45.0, 0.4)], str(pv))
+      pv == [(15.0, 0.0, 0.0), (15.0, -25.0, 0.0), (24.2, -25.0, 0.0),
+             (25.0, -25.4, 0.4), (25.0, -45.0, 0.0)], str(pv))
 
 # --- toolpath visualization (vis.py) ---
 from LatheCAM import vis
@@ -143,7 +144,7 @@ sdoc.recompute()
 
 s_stock, s_per_op = sim.motions_for_document(sdoc)
 profile = sim.finished_envelope(s_stock, s_per_op)
-r_at = {round(z, 2): r for z, r in profile}
+r_at = {round(z, 2): r for z, r, _b in profile}
 check("sim: thin section at r=7.5", abs(r_at[-5.0] - 7.5) < 0.06, str(r_at[-5.0]))
 check("sim: shoulder region at r=12.5", abs(r_at[-35.0] - 12.5) < 0.06,
       str(r_at[-35.0]))
@@ -155,6 +156,51 @@ check("sim: volume matches stepped shaft", abs(sim_obj.Shape.Volume - vol_expect
 sim.simulate(sdoc)  # re-run must replace
 check("sim: re-run replaces", len([o for o in sdoc.Objects
       if o.Name == "Sim_part"]) == 1)
+
+# --- v0.3.2: sim understands ID vs OD (bore grows, outer untouched) ---
+idoc = FreeCAD.newDocument("IdSimTest")
+ist = objects.create_setup(idoc)
+ist.StockDiameter = 18.0
+ist.StockLength = 33.0
+ist.BoreDiameter = 6.0
+iop = objects.create_op(idoc, "id_finish")
+iop.ProfileString = ("17.6,0; 16.1,-0.2; 16.1,-7; 13.914,-7.198;"
+                     " 10,-20; 10,-22.1; 6,-22.3")
+iop.ZEnd = -22.3
+idoc.recompute()
+i_stock, i_per_op = sim.motions_for_document(idoc)
+i_prof = sim.finished_envelope(i_stock, i_per_op)
+b_at = {round(z, 2): (r, b) for z, r, b in i_prof}
+check("sim ID: outer untouched by boring",
+      all(abs(r - 9.0) < 1e-6 for r, _b in b_at.values()), "")
+check("sim ID: counterbore in bore profile",
+      abs(b_at[-3.0][1] - 8.05) < 0.06, str(b_at[-3.0]))
+check("sim ID: pre-drill untouched past cut",
+      abs(b_at[-25.0][1] - 3.0) < 1e-6, str(b_at[-25.0]))
+iobj = sim.simulate(idoc)
+check("sim ID: result solid valid", iobj.Shape.isValid())
+
+
+def _rb(z):
+    segs = [(0.0, 8.8), (-0.2, 8.05), (-7.0, 8.05), (-7.198, 6.957),
+            (-20.0, 5.0), (-22.1, 5.0), (-22.3, 3.0), (-33.0, 3.0)]
+    if z >= 0:
+        return 8.8
+    for (z0, r0), (z1, r1) in zip(segs, segs[1:]):
+        if z >= z1:
+            return r0 + (z - z0) / (z1 - z0) * (r1 - r0)
+    return 3.0
+
+
+import math as _m
+_vol = 0.0
+_zz = 0.0
+while _zz > -33.0:
+    _r = _rb(_zz - 0.0025)
+    _vol += _m.pi * (81.0 - _r * _r) * 0.005
+    _zz -= 0.005
+check("sim ID: tube volume matches bored cavity",
+      abs(iobj.Shape.Volume - _vol) < 30, f"{iobj.Shape.Volume:.0f} vs {_vol:.0f}")
 
 # ---------------------------------------------------------------- v0.1.6 fixes
 import tempfile

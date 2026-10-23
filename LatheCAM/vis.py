@@ -23,7 +23,11 @@ STYLE = {
 
 
 def motions_for_document(doc):
-    """(stock, [(op_label, [Motion])]) for the whole document."""
+    """(stock, [(op_label, boring, [Motion])]) for the whole document.
+
+    boring=True marks ID-type ops (id_*, internal thread) so sim can grow
+    the bore instead of shrinking the outer envelope.
+    """
     setup, ops = collect_program(doc)
     if setup is None:
         raise ValueError("no Lathe::Setup object in document")
@@ -38,7 +42,9 @@ def motions_for_document(doc):
         tool = tools.get(op.tool)
         if tool is None:
             raise ValueError(f"tool {op.tool!r} not in library")
-        out.append((o.Label, generate(op, tool, stock)))
+        boring = (op.type.startswith("id_")
+                  or (op.type == "thread" and getattr(op, "thread_inside", False)))
+        out.append((o.Label, boring, generate(op, tool, stock)))
     return stock, out
 
 
@@ -58,7 +64,7 @@ def _edge(x0, z0, x1, z1):
 def motions_to_edges(per_op):
     """{kind: [edges]} — each Motion is a move TO (x, z) from the previous point."""
     edges = {k: [] for k in STYLE}
-    for _label, motions in per_op:
+    for _label, _boring, motions in per_op:
         prev = None
         for mo in motions:
             if mo.kind == "dwell":

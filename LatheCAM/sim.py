@@ -1,13 +1,15 @@
 """Lathe simulation: material-removal result + animated tool marker.
 
-For OD turning the cut is axisymmetric: at every axial position Z the tool
-leaves the smallest radius it ever reached there. So the finished part can be
-computed exactly from the toolpath alone:
+The cut is axisymmetric, so the finished part follows from the toolpath
+alone, but OD and ID cuts work opposite ways:
 
-    final_r(z) = min(stock_r, min radius of every feed/thread move at z)
+  * OD turning leaves the SMALLEST radius the tool ever reached at z
+  * boring GROWS the bore: the LARGEST radius the ID tool reached at z,
+    starting from the pre-drilled bore radius
 
-The result is revolved 360 deg into a solid ("Sim_part"). Optionally a tool
-marker is animated along the path (GUI only).
+The result is the annulus between the two profiles, revolved 360 deg into
+the solid "Sim_part" (solid, not a plug, when a bore exists). Optionally a
+tool marker is animated along the path (GUI only).
 """
 
 import FreeCAD as App
@@ -21,53 +23,76 @@ _ANIM = {}  # keeps timer + state alive between calls
 
 
 def _cut_segments(per_op):
-    """[(x0, z0, x1, z1, kind)] for every moving cut (feed/thread), radii."""
+    """[(r0, z0, r1, z1, kind, boring)] for every moving cut (feed/thread)."""
     segs = []
-    for _label, motions in per_op:
+    for _label, boring, motions in per_op:
         prev = None
         for mo in motions:
             if mo.kind in ("feed", "thread") and prev is not None:
                 if abs(prev[0] - mo.x) > 1e-9 or abs(prev[1] - mo.z) > 1e-9:
-                    segs.append((prev[0] / 2.0, prev[1], mo.x / 2.0, mo.z, mo.kind))
+                    segs.append((prev[0] / 2.0, prev[1], mo.x / 2.0, mo.z,
+                                 mo.kind, boring))
             prev = (mo.x, mo.z)
     return segs
 
 
 def finished_envelope(stock, per_op, dz=0.05):
-    """[(z, radius)] profile of the finished part, face (z=0) to back (-L)."""
+    """[(z, r_outer, r_bore)] profile of the finished part, face (z=0) to back.
+
+    OD moves shrink r_outer (min radius reached); boring moves grow r_bore
+    (max radius reached, from the pre-drilled bore radius). r_bore is
+    clamped to r_outer.
+    """
     import math
     n = int(round(stock.length / dz)) + 1
-    prof = [stock.diameter / 2.0] * n
+    outer = [stock.diameter / 2.0] * n
+    bore = [stock.bore_diameter / 2.0] * n
     segs = _cut_segments(per_op)
-    for x0, z0, x1, z1, _kind in segs:
+    for x0, z0, x1, z1, _kind, boring in segs:
         zlo, zhi = min(z0, z1), max(z0, z1)
         if abs(z1 - z0) < 1e-9:  # pure radial move: cuts one plane
             i = int(round(-z0 / dz))
             if 0 <= i < n:
-                prof[i] = min(prof[i], min(x0, x1))
+                if boring:
+                    bore[i] = max(bore[i], max(x0, x1))
+                else:
+                    outer[i] = min(outer[i], min(x0, x1))
             continue
         i0 = max(0, int(math.floor(-zhi / dz)))
         i1 = min(n - 1, int(round(-zlo / dz)))
         for i in range(i0, i1 + 1):
             z = -i * dz
-            t = (z - z0) / (z1 - z0)
-            r = x0 + t * (x1 - x0)
-            if r < prof[i]:
-                prof[i] = r
-    return [(-i * dz, prof[i]) for i in range(n)]
+            r = x0 + (z - z0) * (x1 - x0) / (z1 - z0)
+            if boring:
+                if r > bore[i]:
+                    bore[i] = r
+            elif r < outer[i]:
+                outer[i] = r
+    return [(-i * dz, outer[i], min(bore[i], outer[i])) for i in range(n)]
 
 
 def envelope_solid(profile):
-    """Revolve the (z, r) profile around the lathe axis (Z) into a solid."""
-    pts = [Vector(r, 0.0, z) for z, r in profile]
-    # drop consecutive duplicates
-    wire_pts = [pts[0]]
-    for p in pts[1:]:
-        if (p - wire_pts[-1]).Length > 1e-9:
-            wire_pts.append(p)
-    wire_pts.append(Vector(0.0, 0.0, wire_pts[-1].z))  # close to axis at back
-    wire_pts.append(Vector(0.0, 0.0, wire_pts[0].z))   # up the axis to face
-    wire = Part.makePolygon(wire_pts)
+    """Revolve the (z, r_outer, r_bore) profile around the lathe axis (Z).
+
+    Solid when every r_bore is 0; otherwise an annulus whose inner wall
+    follows r_bore — the boring result.
+    """
+    outer = [Vector(r, 0.0, z) for z, r, _b in profile]
+    pts = [outer[0]]
+    for p in outer[1:]:
+        if (p - pts[-1]).Length > 1e-9:
+            pts.append(p)
+    if all(abs(b) <= 1e-9 for _z, _r, b in profile):
+        pts.append(Vector(0.0, 0.0, pts[-1].z))  # close to axis at back
+        pts.append(Vector(0.0, 0.0, pts[0].z))   # up the axis to face
+    else:
+        inner = [Vector(b, 0.0, z) for z, _r, b in profile]
+        for p in reversed(inner):               # back to face along the bore
+            if (p - pts[-1]).Length > 1e-9:
+                pts.append(p)
+    pts.append(pts[0])  # makePolygon does not auto-close; an open wire
+    # yields an invalid face and a wrong-volume revolve
+    wire = Part.makePolygon(pts)
     face = Part.Face(wire)
     return face.revolve(Vector(0, 0, 0), Vector(0, 0, 1), 360)
 
@@ -107,7 +132,7 @@ def simulate(doc, group_name="Simulation"):
 def _flatten(per_op):
     """[(x0, z0, x1, z1, kind)] every moving motion, radii."""
     segs = []
-    for _label, motions in per_op:
+    for _label, _boring, motions in per_op:
         prev = None
         for mo in motions:
             if mo.kind != "dwell" and prev is not None:
