@@ -140,6 +140,15 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.3
+
+- **Animated tool follows the spindle side**: boring/internal-thread
+  segments now draw the marker shank inward (toward the axis, through the
+  bore) instead of outward through the part wall. OD segments unchanged.
+- Fixed marker jumping to origin when the shape flips: assigning
+  `Part::Feature.Shape` resets `Placement`, so the shape switch must
+  happen before the placement is set.
+
 ### 0.3.2
 
 - **Sim understands ID vs OD**: the material model is now dual-profile —

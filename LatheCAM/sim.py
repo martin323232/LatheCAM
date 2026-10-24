@@ -130,14 +130,15 @@ def simulate(doc, group_name="Simulation"):
 # ---------------------------------------------------------------- animation
 
 def _flatten(per_op):
-    """[(x0, z0, x1, z1, kind)] every moving motion, radii."""
+    """[(x0, z0, x1, z1, kind, boring)] every moving motion, radii."""
     segs = []
     for _label, _boring, motions in per_op:
         prev = None
         for mo in motions:
             if mo.kind != "dwell" and prev is not None:
                 if abs(prev[0] - mo.x) > 1e-9 or abs(prev[1] - mo.z) > 1e-9:
-                    segs.append((prev[0] / 2.0, prev[1], mo.x / 2.0, mo.z, mo.kind))
+                    segs.append((prev[0] / 2.0, prev[1], mo.x / 2.0, mo.z,
+                                 mo.kind, _boring))
             prev = (mo.x, mo.z)
     return segs
 
@@ -154,7 +155,7 @@ def animate(doc, duration=12.0, step_ms=30):
 
     speeds = {"rapid": 120.0, "feed": 18.0, "thread": 8.0}  # mm/s display speed
     weights = []
-    for x0, z0, x1, z1, kind in segs:
+    for x0, z0, x1, z1, kind, _b in segs:
         length = ((x1 - x0) ** 2 + (z1 - z0) ** 2) ** 0.5
         weights.append(max(length / speeds.get(kind, 20.0), 0.01))
     total = sum(weights)
@@ -164,10 +165,15 @@ def animate(doc, duration=12.0, step_ms=30):
     if old:
         doc.removeObject(SIM_PREFIX + "tool")
     tip = Part.makeSphere(0.9)
-    arm = Part.makeCylinder(0.35, 6.0, Vector(0, 0, 0), Vector(1, 0, 0))
+    # OD tool holder comes in from outside (+X); a boring bar comes in
+    # through the bore, so its shank runs inward toward the axis (-X).
+    arm_out = Part.makeCylinder(0.35, 6.0, Vector(0, 0, 0), Vector(1, 0, 0))
+    arm_in = Part.makeCylinder(0.35, 6.0, Vector(0, 0, 0), Vector(-1, 0, 0))
+    shape_od = Part.Compound([tip, arm_out])
+    shape_id = Part.Compound([tip, arm_in])
     marker = doc.addObject("Part::Feature", SIM_PREFIX + "tool")
     marker.Label = "Simulated tool"
-    marker.Shape = Part.Compound([tip, arm])
+    marker.Shape = shape_od
     vp = view_placement(doc)
     marker.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "sim"
     vo = getattr(marker, "ViewObject", None)
@@ -178,7 +184,7 @@ def animate(doc, duration=12.0, step_ms=30):
             pass
     doc.recompute()
 
-    state = {"t": 0.0, "i": 0, "acc": 0.0}
+    state = {"t": 0.0, "i": 0, "acc": 0.0, "boring": None}
     old = _ANIM.get("timer")
     if old is not None:            # S5: never leave a zombie timer running
         try:
@@ -191,7 +197,11 @@ def animate(doc, duration=12.0, step_ms=30):
     _ANIM["marker"] = marker
     _ANIM["doc"] = doc
 
-    def place(x, z):
+    def place(x, z, boring):
+        # assigning .Shape resets Placement — switch shape FIRST
+        if state["boring"] != boring:
+            marker.Shape = shape_id if boring else shape_od
+            state["boring"] = boring
         marker.Placement = vp.multiply(
             App.Placement(Vector(x, 0.0, z), App.Rotation()))
 
@@ -205,17 +215,17 @@ def animate(doc, duration=12.0, step_ms=30):
             acc += weights[i] * scale
             i += 1
         if i >= len(segs):
-            place(*segs[-1][2:4])
+            place(*segs[-1][2:4], segs[-1][5])
             timer.stop()
             _ANIM.pop("timer", None)
             return
-        x0, z0, x1, z1, _k = segs[i]
+        x0, z0, x1, z1, _k, boring = segs[i]
         f = (t - acc) / (weights[i] * scale)
-        place(x0 + f * (x1 - x0), z0 + f * (z1 - z0))
+        place(x0 + f * (x1 - x0), z0 + f * (z1 - z0), boring)
 
     timer.setInterval(step_ms)
     timer.timeout.connect(tick)
-    place(segs[0][0], segs[0][1])
+    place(segs[0][0], segs[0][1], segs[0][5])
     timer.start()
     return marker
 
