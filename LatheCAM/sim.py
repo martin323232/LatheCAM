@@ -165,12 +165,14 @@ def animate(doc, duration=12.0, step_ms=30):
     if old:
         doc.removeObject(SIM_PREFIX + "tool")
     tip = Part.makeSphere(0.9)
-    # OD tool holder comes in from outside (+X); a boring bar comes in
-    # through the bore, so its shank runs inward toward the axis (-X).
-    arm_out = Part.makeCylinder(0.35, 6.0, Vector(0, 0, 0), Vector(1, 0, 0))
-    arm_in = Part.makeCylinder(0.35, 6.0, Vector(0, 0, 0), Vector(-1, 0, 0))
-    shape_od = Part.Compound([tip, arm_out])
-    shape_id = Part.Compound([tip, arm_in])
+    # On the machine the tool shank runs parallel to the spindle axis (Z),
+    # extending from the tip back toward the face side (+Z).  An OD holder
+    # sits just outside the cut surface; a boring-bar body sits inside the
+    # bore with the tip projecting radially at its end.
+    shank_od = Part.makeCylinder(0.35, 6.0, Vector(0.5, 0, 0), Vector(0, 0, 1))
+    shank_id = Part.makeCylinder(0.35, 6.0, Vector(-1.2, 0, 0), Vector(0, 0, 1))
+    shape_od = Part.Compound([tip, shank_od])
+    shape_id = Part.Compound([tip, shank_id])
     marker = doc.addObject("Part::Feature", SIM_PREFIX + "tool")
     marker.Label = "Simulated tool"
     marker.Shape = shape_od

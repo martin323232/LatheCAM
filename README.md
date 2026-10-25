@@ -140,6 +140,14 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.4
+
+- **Tool shank orientation matches the machine**: the animated marker's
+  shank now runs parallel to the spindle axis (Z), extending from the tip
+  back toward the face side — like a real tool holder in the turret.
+  OD shank sits just outside the cut surface; boring-bar shank sits
+  inside the bore with the tip projecting radially.
+
 ### 0.3.3
 
 - **Animated tool follows the spindle side**: boring/internal-thread
