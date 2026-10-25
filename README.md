@@ -140,6 +140,15 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.5
+
+- **Profile-aware bore roughing**: `id_rough` now accepts a ProfileString.
+  Each pass cuts the finish profile capped at D = bore + 2·DepthPerPass·k
+  and offset inward by 2·StockToLeave, so every point keeps exactly
+  StockToLeave radial for the finish pass. Rough paths are polylines
+  (arcs belong to the finish). Without a profile `id_rough` is unchanged
+  (cylindrical stepping).
+
 ### 0.3.4
 
 - **Tool shank orientation matches the machine**: the animated marker's

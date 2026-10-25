@@ -435,6 +435,63 @@ def test_v031_id_finish_profile():
           check_collisions(mv2, stock, boring=True) == [])
 
 
+def test_v035_id_rough_profile():
+    """v0.3.5 E: id_rough follows a profile in layered passes, uniform leave."""
+    from LatheCAM.paths import CollisionChecker
+    stock = Stock(diameter=18.0, length=33.0, bore_diameter=6.0)
+    tool = Tool(name="CCGT boring", tool_number=8, kind="bore", rpm=2000,
+                feed=0.025)
+    op = Op("id_rough", "CCGT boring", "drum screw bore rough", z_start=0.0,
+            z_end=-20.7, depth_per_pass=1.5, stock_to_leave=0.5,
+            profile=DRUM_PROFILE)
+    mv = generate(op, tool, stock)
+    feeds = [m for m in mv if m.kind == "feed"]
+    # each pass starts with a radial feed-out at the face (z=0, x > enter)
+    starts = [m for m in feeds if abs(m.z) < 1e-9 and m.x > 5.0 + 1e-9]
+    check("E: 4 rough passes (dia step = 2*dpp)",
+          [round(m.x, 3) for m in starts] == [9.0, 12.0, 15.0, 15.815],
+          str([round(m.x, 3) for m in starts]))
+    check("E: first pass dia = bore + 2*dpp",
+          starts and abs(starts[0].x - 9.0) < 1e-9,
+          str(starts[0].x if starts else None))
+    check("E: last pass dia = profile max - 2*leave",
+          starts and abs(starts[-1].x - 15.815) < 1e-9,
+          str(starts[-1].x if starts else None))
+    # last pass = profile capped and offset by leave: X_i = min(final, d-2*leave)
+    i = mv.index(starts[-1])
+    last_path = []
+    for m in mv[i:]:
+        if m.kind != "feed":
+            break
+        last_path.append((round(m.x, 4), m.z))
+    want = [(round(max(min(15.815, d - 1.0), 5.0), 4), z)
+            for (d, z, *_r) in DRUM_PROFILE]
+    check("E: last pass = profile offset by leave", last_path == want,
+          f"{last_path} vs {want}")
+    # uniform stock left for the finish at every profile point
+    worst = 0.0
+    for (d, z, *_r) in DRUM_PROFILE:
+        xs = [m.x for m in feeds if abs(m.z - z) < 1e-9]
+        if xs:
+            worst = max(worst, (d - max(xs)) / 2.0)
+    check("E: leave never exceeds stock_to_leave", worst <= 0.5 + 1e-6,
+          f"worst {worst:.3f}")
+    check("E: no diagonal rapid at Z<0", not _diagonal_rapids(mv),
+          str(_diagonal_rapids(mv)))
+    problems = check_collisions(mv, stock, boring=True)
+    check("E: check_collisions boring=True clean", problems == [],
+          str(problems))
+    # rough + finish sequence is collision-free on shared material model
+    fin = Op("id_finish", "CCGT boring", "drum screw bore", z_start=0.0,
+             z_end=-20.7, profile=DRUM_PROFILE)
+    mv2 = generate(fin, tool, stock)
+    c = CollisionChecker(stock)
+    c.add(mv, boring=True)
+    c.add(mv2, boring=True)
+    check("E: rough+finish collision-free together", c.problems == [],
+          str(c.problems))
+
+
 def test_v031_od_finish_exit():
     """v0.3.1 B: od_finish exit is radial-then-axial, never a diagonal."""
     stock = Stock(diameter=24.0, length=30.0)
@@ -479,6 +536,7 @@ if __name__ == "__main__":
     test_arc_samples()
     test_arc_collision_clean()
     test_v031_id_finish_profile()
+    test_v035_id_rough_profile()
     test_v031_od_finish_exit()
     test_nose_offset()
     print("\n--- sample gcode (first 40 lines) ---")

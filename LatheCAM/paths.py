@@ -219,13 +219,79 @@ def od_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
 
 # ---------------------------------------------------------------- ID (bore)
 
+def _id_rough_profile(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
+    """Profile-aware bore roughing: layered passes over the finish profile.
+
+    Pass k cuts the finish profile capped at diameter D_k = bore + 2*dpp*k
+    (stepping by 2*dpp) and offset inward by 2*stock_to_leave, so every
+    profile point keeps exactly stock_to_leave radial for the finish pass.
+    Paths are polylines — arc entries belong to the finish pass. Boring
+    discipline holds: X and Z never move together on rapids at Z < 0."""
+    m = _approach(stock)
+    feed = _feed(op, tool)
+    enter = max(stock.bore_diameter - 1.0, 1.0)
+    pts = [(p[0], p[1], p[2] if len(p) > 2 else 0.0) for p in op.profile]
+    max_d = max(p[0] for p in pts)
+    final = max_d - 2 * op.stock_to_leave
+    if final <= stock.bore_diameter:
+        raise ValueError("id_rough profile: profile max dia leaves nothing "
+                         "to remove over the existing bore")
+    passes = []
+    d = stock.bore_diameter + 2 * op.depth_per_pass
+    while d <= final + 1e-9:
+        passes.append(d)
+        d += 2 * op.depth_per_pass
+    if not passes or final > passes[-1] + 1e-9:
+        passes.append(final)
+    z_from = op.z_start if op.z_start < 0 else 0.0
+    # only profile points at or below the entry depth are cut by this op
+    kept = [p for p in pts if p[1] <= z_from + 1e-9]
+    if not kept:
+        raise ValueError("id_rough profile: no profile points below ZStart")
+
+    m.append(Motion("rapid", enter, stock.safe_z()))
+    if op.z_start < 0:
+        m.append(Motion("rapid", enter, z_from))
+    else:
+        m.append(Motion("rapid", enter, op.z_start + stock.safe_z_clearance))
+        m.append(Motion("feed", enter, z_from, feed, "plunge into bore mouth"))
+
+    for k, D in enumerate(passes):
+        label = "profile rough" if k < len(passes) - 1 else "profile rough last"
+        path = [(max(min(D, p[0] - 2 * op.stock_to_leave), enter), p[1])
+                for p in kept]
+        if path[0][1] < z_from - 1e-9:
+            path.insert(0, (path[0][0], z_from))
+        prev = path[0]
+        m.append(Motion("feed", prev[0], prev[1], feed,
+                        f"{label} out to X{prev[0]:.2f}"))
+        for x, z in path[1:]:
+            if abs(x - prev[0]) < 1e-9 and abs(z - prev[1]) < 1e-9:
+                continue
+            m.append(Motion("feed", x, z, feed, f"{label} cut"))
+            prev = (x, z)
+        if path[-1][0] > enter + 1e-9:
+            m.append(Motion("rapid", enter, path[-1][1], 0,
+                            "collapse in bore"))
+        if k < len(passes) - 1:
+            m.append(Motion("rapid", enter, z_from, 0, "return to entry"))
+    m.append(Motion("rapid", enter, stock.safe_z(), 0, "lift out at enter dia"))
+    m += _retract(stock)
+    return m
+
+
 def id_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     """Rough a bore: enter below bore dia, step outwards in X.
 
     Standard boring direction (R5): each pass feeds out to the pass diameter
     at the entry Z, then cuts toward the chuck (-Z), retracts 0.5 mm inward
     and rapids back inside the hole. bore_back_cut=True reverses the axial
-    cut direction (+Z, back-boring)."""
+    cut direction (+Z, back-boring).
+
+    With a profile set, delegates to _id_rough_profile: layered passes that
+    follow the finish profile (capped + offset), not just a cylinder."""
+    if op.profile:
+        return _id_rough_profile(op, tool, stock)
     m = _approach(stock)
     feed = _feed(op, tool)
     enter = max(stock.bore_diameter - 1.0, 1.0)
