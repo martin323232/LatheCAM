@@ -1,6 +1,7 @@
 """Program builder: FreeCAD doc -> blocks -> Masso G-code. Headless-safe."""
 
 import os
+from datetime import datetime
 from typing import Dict, List
 
 from .model import Tool
@@ -132,7 +133,8 @@ def post_document(doc, filename: str = None) -> str:
         raise ValueError("rapid collision check failed:\n  " + "\n  ".join(checker.problems))
     gcode = post_program(
         blocks,
-        header=f"LatheCAM {os.path.basename(filename or 'program')} | stock "
+        header=f"LatheCAM {os.path.basename(filename or 'program')} | posted "
+               f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | stock "
                f"D{float(setup.StockDiameter):g} x {float(setup.StockLength):g} mm",
         css=bool(getattr(setup, "UseCSS", False)),
         line_numbers=bool(getattr(setup, "LineNumbers", False)),

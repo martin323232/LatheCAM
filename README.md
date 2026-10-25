@@ -140,6 +140,12 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.6
+
+- **Post timestamp**: every posted program carries `; posted YYYY-MM-DD HH:MM:SS`
+  in its header comment, so an .nc file can always be traced to the moment it
+  was generated.
+
 ### 0.3.5
 
 - **Profile-aware bore roughing**: `id_rough` now accepts a ProfileString.

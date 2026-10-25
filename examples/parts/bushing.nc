@@ -1,4 +1,4 @@
-; LatheCAM bushing.nc | stock D30 x 32 mm
+; LatheCAM bushing.nc | posted 2026-10-25 11:26:39 | stock D30 x 32 mm
 O0100
 G40 G18 G21 G90
 (Op: face [face])
