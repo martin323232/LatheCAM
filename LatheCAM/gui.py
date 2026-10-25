@@ -2,6 +2,7 @@
 
 import os
 from contextlib import contextmanager
+from datetime import datetime
 
 import FreeCAD
 import FreeCADGui as Gui
@@ -9,7 +10,7 @@ import FreeCADGui as Gui
 from . import objects
 from . import vis
 from . import sim
-from .program import post_document
+from . import program
 from .model import OP_TYPES
 
 
@@ -79,13 +80,15 @@ class CmdPost:
     def Activated(self):
         from PySide import QtGui, QtWidgets
         doc = Gui.ActiveDocument.Document
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            None, "Post G-code", os.path.expanduser("~/lathe_program.nc"),
+            None, "Post G-code",
+            os.path.expanduser(f"~/lathe_program_{stamp}.nc"),
             "G-code (*.nc *.ngc *.tap);;All files (*)")
         if not path:
             return
         try:
-            gcode = post_document(doc, path)
+            gcode = program.post_document(doc, path)
             n = len(gcode.splitlines())
             QtWidgets.QMessageBox.information(
                 None, "LatheCAM", f"Wrote {n} lines to\n{path}")

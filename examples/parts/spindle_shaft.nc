@@ -1,4 +1,4 @@
-; LatheCAM spindle_shaft.nc | posted 2026-10-25 11:26:38 | stock D30 x 62 mm
+; LatheCAM spindle_shaft.nc | posted 2026-10-25 11:43:01 | stock D30 x 62 mm
 O0100
 G40 G18 G21 G90
 (Op: face [face])

@@ -140,6 +140,14 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.7
+
+- **Timestamp in default filename**: the Post dialog now suggests
+  `lathe_program_YYYY-MM-DD_HHMM.nc` so the posted time is in the filename too.
+- **Late-bound post call**: the Post command calls `program.post_document`
+  through the module, so reloading the module (or an addon update) takes effect
+  without needing the old direct function import.
+
 ### 0.3.6
 
 - **Post timestamp**: every posted program carries `; posted YYYY-MM-DD HH:MM:SS`
