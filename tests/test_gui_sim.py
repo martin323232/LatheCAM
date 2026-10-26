@@ -113,6 +113,15 @@ try:
     print(f"FILTER OK: full={v_full:.0f} thread-only={v_thr:.0f} "
           f"face-only={v_face:.0f}", flush=True)
 
+    # auto-redraw scheduling (v0.3.13): a change schedules, a repeat does not
+    from LatheCAM import gui as _gui
+    assert _gui.refresh_if_changed(doc) is True, "first refresh not scheduled"
+    assert _gui.refresh_if_changed(doc) is False, "unchanged doc re-scheduled"
+    by_type["face"].FaceDepth = 3.0
+    doc.recompute()
+    assert _gui.refresh_if_changed(doc) is True, "op edit did not schedule redraw"
+    print("AUTOVIS OK", flush=True)
+
     print("SIM PASS", flush=True)
 except Exception as e:  # noqa: BLE001
     import traceback

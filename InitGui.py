@@ -40,6 +40,10 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheSimChoose", gui.CmdSimulateChoose())
         self.appendToolbar("LatheCAM", cmds)
         self.appendMenu("LatheCAM", cmds)
+        # keep the drawn toolpaths in step with op edits
+        if hasattr(Gui, "addDocumentObserver"):
+            self._observer = gui.AutoVisObserver()
+            Gui.addDocumentObserver(self._observer)
 
     def GetClassName(self):
         return "Gui::PythonWorkbench"

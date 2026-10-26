@@ -110,6 +110,7 @@ class CmdVisualize:
         doc = Gui.ActiveDocument.Document
         try:
             vis.visualize(doc)
+            _AUTO["sig"] = _program_signature(doc)
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(None, "LatheCAM visualize failed", str(e))
             return
@@ -117,6 +118,74 @@ class CmdVisualize:
             Gui.SendMsgToActiveView("ViewFit")
         except Exception:
             pass
+
+
+_AUTO = {"sig": None}  # last drawn program signature (auto-redraw dedupe)
+_OBSERVERS = []        # keep observers alive for the whole session
+
+
+def _program_signature(doc):
+    """Cheap hash of everything that affects the toolpaths."""
+    import hashlib
+    h = hashlib.sha1()
+    for o in doc.Objects:
+        if getattr(o, "LatheRole", "") not in ("op", "setup"):
+            continue
+        h.update(o.Name.encode())
+        for p in o.PropertiesList:
+            if p in ("Label", "Label2"):
+                continue
+            try:
+                h.update(repr(o.getPropertyByName(p)).encode())
+            except Exception:
+                h.update(b"?")
+    return h.hexdigest()
+
+
+def refresh_if_changed(doc, force=False):
+    """Redraw the toolpaths if the program changed. Returns True if scheduled.
+
+    Called from the document observer after every recompute; the signature
+    check keeps it from rebuilding (and from re-triggering itself, since
+    visualize() itself touches the document).
+    """
+    if doc is None:
+        return False
+    if not any(getattr(o, "LatheRole", "") == "op" for o in doc.Objects):
+        return False
+    sig = _program_signature(doc)
+    if not force and sig == _AUTO["sig"]:
+        return False
+    _AUTO["sig"] = sig
+
+    def run():
+        try:
+            vis.visualize(doc)
+        except Exception:
+            pass                    # never break the GUI over a redraw
+    try:
+        from PySide import QtCore
+        QtCore.QTimer.singleShot(0, run)   # after the recompute has finished
+    except Exception:
+        run()
+    return True
+
+
+class AutoVisObserver:
+    """Redraw toolpaths whenever a LatheCAM program is recomputed.
+
+    Both recompute notifications are implemented; the signature check makes
+    whichever fires second a no-op.
+    """
+
+    def __init__(self):
+        _OBSERVERS.append(self)
+
+    def afterRecompute(self, doc):
+        refresh_if_changed(doc)
+
+    def slotRecomputed(self, doc):
+        refresh_if_changed(doc)
 
 
 class CmdRegenerate:
@@ -134,12 +203,13 @@ class CmdRegenerate:
         from PySide import QtWidgets
         doc = Gui.ActiveDocument.Document
         doc.recompute()
-        try:
-            vis.visualize(doc)
-        except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.critical(None, "LatheCAM regenerate failed",
-                                           str(e))
-            return
+        if not refresh_if_changed(doc, force=True):
+            try:
+                vis.visualize(doc)
+            except Exception as e:  # noqa: BLE001
+                QtWidgets.QMessageBox.critical(None, "LatheCAM regenerate failed",
+                                               str(e))
+                return
         try:
             Gui.SendMsgToActiveView("ViewFit")
         except Exception:
