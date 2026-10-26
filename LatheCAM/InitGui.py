@@ -1,0 +1,44 @@
+"""LatheCAM workbench for FreeCAD 1.x.
+
+FreeCAD 1.x runs InitGui.py via exec() inside a function scope
+(FreeCADGuiInit.RunInitGuiPy), so module-level imports are stored in a
+locals dict that is discarded before Initialize() runs — referencing
+them later raises NameError at workbench activation. All imports used
+inside Initialize() must therefore happen inside Initialize() itself.
+"""
+
+import FreeCADGui as Gui
+
+
+class LatheCAMWorkbench(Gui.Workbench):
+    MenuText = "LatheCAM"
+    ToolTip = "Turning CAM for Masso lathes"
+    Icon = ""
+
+    def Initialize(self):
+        import FreeCADGui as Gui
+        from LatheCAM import gui
+        from LatheCAM.model import OP_TYPES
+
+        cmds = ["CmdLatheSetup"]
+        Gui.addCommand("CmdLatheSetup", gui.CmdSetup())
+        cmds.append("CmdLatheTools")
+        Gui.addCommand("CmdLatheTools", gui.CmdToolLibrary())
+        for t in OP_TYPES:
+            name = f"CmdLatheOp_{t}"
+            Gui.addCommand(name, gui.make_op_command(t))
+            cmds.append(name)
+        cmds.append("CmdLathePost")
+        Gui.addCommand("CmdLathePost", gui.CmdPost())
+        cmds.append("CmdLatheVis")
+        Gui.addCommand("CmdLatheVis", gui.CmdVisualize())
+        cmds.append("CmdLatheSim")
+        Gui.addCommand("CmdLatheSim", gui.CmdSimulate())
+        self.appendToolbar("LatheCAM", cmds)
+        self.appendMenu("LatheCAM", cmds)
+
+    def GetClassName(self):
+        return "Gui::PythonWorkbench"
+
+
+Gui.addWorkbench(LatheCAMWorkbench())

@@ -140,6 +140,14 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.8
+
+- **Profile-aware OD roughing**: `od_rough` now accepts a ProfileString and
+  cuts layered passes that follow the finish profile (offset outward by
+  StockToLeave, floored at the pass diameter), instead of straight cylinders.
+  Stepped/tapered parts rough evenly with uniform finish stock at every
+  profile point; without a profile the old straight-pass behaviour is kept.
+
 ### 0.3.7
 
 - **Timestamp in default filename**: the Post dialog now suggests

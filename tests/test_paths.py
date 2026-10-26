@@ -492,6 +492,63 @@ def test_v035_id_rough_profile():
           str(c.problems))
 
 
+def test_v038_od_rough_profile():
+    """v0.3.8: od_rough follows a profile in layered passes, uniform leave.
+
+    M10 drum-screw geometry: stock D18, shank 9.75, land 8.5, flange 18."""
+    from LatheCAM.paths import CollisionChecker
+    prof = [(7.75, 0.0), (9.75, -1.0), (9.75, -15.16), (8.5, -16.5),
+            (8.5, -19.5), (17.5, -19.5), (18.0, -19.75), (18.0, -23.55),
+            (17.5, -23.8)]
+    stock = Stock(diameter=18.0, length=30.0)
+    tool = Tool(name="OD-rough", tool_number=1, kind="turn", rpm=800,
+                feed=0.2)
+    op = Op("od_rough", "OD-rough", "m10 od rough", z_start=0.0,
+            z_end=-23.8, depth_per_pass=1.5, stock_to_leave=0.5,
+            target_diameter=9.75, profile=prof)
+    mv = generate(op, tool, stock)
+    feeds = [m for m in mv if m.kind == "feed"]
+    # pass entry: radial feed at safe Z (in front of the face)
+    z_safe = stock.safe_z()
+    starts = [m for m in feeds if abs(m.z - z_safe) < 1e-9]
+    check("R: 4 rough passes (15, 12, 9.0, floor 8.75)",
+          [round(m.x, 3) for m in starts] == [15.0, 12.0, 9.0, 8.75],
+          str([round(m.x, 3) for m in starts]))
+    # last pass = profile offset outward by leave, clamped to stock
+    i = mv.index(starts[-1])
+    last_path = []
+    for m in mv[i + 1:]:
+        if m.kind != "feed":
+            break
+        last_path.append((round(m.x, 4), m.z))
+    want = [(round(min(18.0, max(d + 1.0, 8.75)), 4), z)
+            for (d, z) in prof]
+    check("R: last pass = profile offset by leave", last_path == want,
+          f"{last_path} vs {want}")
+    # uniform stock left for the finish at every profile point (floor is
+    # min-offset, so nothing is lifted above its leave)
+    worst = 0.0
+    for (d, z) in prof:
+        xs = [m.x for m in feeds if abs(m.z - z) < 1e-9]
+        if xs:
+            worst = max(worst, (min(xs) - d) / 2.0)
+    check("R: leave never exceeds stock_to_leave",
+          worst <= 0.5 + 1e-6, f"worst {worst:.3f}")
+    bad = _diagonal_rapids(mv)
+    check("R: no diagonal rapid", not bad, str(bad))
+    problems = check_collisions(mv, stock)
+    check("R: check_collisions clean", problems == [], str(problems))
+    # rough + finish collision-free on the shared material model
+    fin = Op("od_finish", "OD-finish", "m10 od finish", z_start=0.0,
+             z_end=-23.8, target_diameter=9.75, profile=prof)
+    mv2 = generate(fin, tool, stock)
+    c = CollisionChecker(stock)
+    c.add(mv)
+    c.add(mv2)
+    check("R: rough+finish collision-free together", c.problems == [],
+          str(c.problems))
+
+
 def test_v031_od_finish_exit():
     """v0.3.1 B: od_finish exit is radial-then-axial, never a diagonal."""
     stock = Stock(diameter=24.0, length=30.0)
@@ -537,6 +594,7 @@ if __name__ == "__main__":
     test_arc_collision_clean()
     test_v031_id_finish_profile()
     test_v035_id_rough_profile()
+    test_v038_od_rough_profile()
     test_v031_od_finish_exit()
     test_nose_offset()
     print("\n--- sample gcode (first 40 lines) ---")
