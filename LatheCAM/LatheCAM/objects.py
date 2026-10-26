@@ -173,6 +173,9 @@ class OpProxy:
         obj.addProperty("App::PropertyLength", "ThreadLength", "Thread").ThreadLength = 20.0
         obj.addProperty("App::PropertyLength", "ThreadLeadIn", "Thread",
                         translate("Lathe", "thread lead-in (0 = 3x pitch)")).ThreadLeadIn = 0.0
+        obj.addProperty("App::PropertyLength", "ThreadLeadOut", "Thread",
+                        translate("Lathe", "thread run-out past the thread "
+                                  "end (0 = 1x pitch)")).ThreadLeadOut = 0.0
         obj.addProperty("App::PropertyBool", "ThreadSpringPass", "Thread").ThreadSpringPass = True
         obj.addProperty("App::PropertyDistance", "ThreadZLimit", "Thread",
                         translate("Lathe", "deepest Z the thread may reach "
@@ -223,6 +226,7 @@ class OpProxy:
             thread_pitch=float(s.ThreadPitch),
             thread_length=float(s.ThreadLength),
             thread_lead_in=float(getattr(s, "ThreadLeadIn", 0.0)) or None,
+            thread_lead_out=float(getattr(s, "ThreadLeadOut", 0.0)) or None,
             thread_spring_pass=bool(s.ThreadSpringPass),
             thread_z_limit=float(getattr(s, "ThreadZLimit", 0.0)) or None,
             bore_back_cut=bool(getattr(s, "BoreBackCut", False)),

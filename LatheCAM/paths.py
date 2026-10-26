@@ -104,7 +104,11 @@ def od_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     (safe_x, safe_z), moves Z at safe_x (outside the stock), then reaches
     the pass diameter radially. If that entry point is axially inside the
     stock the radial move is a FEED (plunge cut), never a rapid.
-    """
+
+    With a profile set, delegates to _od_rough_profile: layered passes that
+    follow the finish profile (offset + floored), not just a cylinder."""
+    if op.profile:
+        return _od_rough_profile(op, tool, stock)
     m = _approach(stock)
     feed = _feed(op, tool)
     clr = stock.safe_z_clearance
@@ -130,6 +134,55 @@ def od_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     # final roughing pass exactly at the leave diameter
     if final > 0.001:
         m += pass_at(final, "OD rough finish")
+    m += _retract(stock)
+    return m
+
+
+def _od_rough_profile(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
+    """Profile-aware OD roughing: layered passes over the finish profile.
+
+    Pass k cuts the finish profile offset outward by 2*stock_to_leave and
+    floored at the pass diameter D_k (stepping down from the stock by
+    2*dpp, final pass at the floor = profile min dia + 2*leave), so every
+    profile point at or above the floor keeps exactly stock_to_leave radial
+    for the finish pass. Points below the floor (small chamfers) keep more
+    stock and are finished in one light cut — roughing never follows every
+    micro feature. Paths are polylines; arc entries belong to the finish.
+    Every Z move happens at safe_x or at constant X; no diagonal rapids."""
+    m = _approach(stock)
+    feed = _feed(op, tool)
+    pts = [(p[0], p[1]) for p in op.profile]
+    kept = [p for p in pts if p[1] >= op.z_end - 1e-9]
+    if not kept:
+        raise ValueError("od_rough profile: no profile points above ZEnd")
+    floor = min(p[0] for p in kept) + 2 * op.stock_to_leave
+    if floor >= stock.diameter:
+        raise ValueError("od_rough profile: profile leaves nothing to "
+                         "remove from the stock")
+    passes = []
+    d = stock.diameter - 2 * op.depth_per_pass
+    while d >= floor + 1e-9:
+        passes.append(d)
+        d -= 2 * op.depth_per_pass
+    if not passes or floor < passes[-1] - 1e-9:
+        passes.append(floor)
+    z_entry = op.z_start if op.z_start < 0 else _entry_z(stock, op.z_start)
+    for k, D in enumerate(passes):
+        label = "profile rough" if k < len(passes) - 1 else "profile rough last"
+        path = [(min(stock.diameter, max(p[0] + 2 * op.stock_to_leave, D)),
+                 p[1]) for p in kept]
+        m.append(Motion("rapid", stock.safe_x(), stock.safe_z()))
+        m.append(Motion("rapid", stock.safe_x(), z_entry))
+        m.append(Motion("feed", path[0][0], z_entry, feed,
+                        f"{label} entry X{path[0][0]:.2f}"))
+        prev = path[0]
+        m.append(Motion("feed", prev[0], prev[1], feed, f"{label} plunge"))
+        for x, z in path[1:]:
+            if abs(x - prev[0]) < 1e-9 and abs(z - prev[1]) < 1e-9:
+                continue
+            m.append(Motion("feed", x, z, feed, f"{label} cut"))
+            prev = (x, z)
+        m.append(Motion("rapid", stock.safe_x(), prev[1], 0, "retract X"))
     m += _retract(stock)
     return m
 
@@ -502,7 +555,7 @@ def thread(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     m = _approach(stock)
     p = op.thread_pitch
     lead_in = op.thread_lead_in or max(3.0 * p, 2.0)
-    lead_out = max(1.0 * p, 1.0)
+    lead_out = getattr(op, "thread_lead_out", None) or max(1.0 * p, 1.0)
     z_engage = op.z_start + lead_in
     z_cut_end = op.z_start - op.thread_length - lead_out
     safe = op.thread_major_diameter + 2.0
@@ -531,7 +584,7 @@ def _thread_internal(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     Z. B2 discipline on withdrawal: lift out at the enter diameter first.
     VERIFY — dry-run mandatory (no proven reference)."""
     p = op.thread_pitch
-    lead_out = max(1.0 * p, 1.0)
+    lead_out = getattr(op, "thread_lead_out", None) or max(1.0 * p, 1.0)
     minor = op.thread_major_diameter - 2 * thread_depth(p)
     enter = max(stock.bore_diameter - 1.0, 1.0)
     z_engage = op.z_start

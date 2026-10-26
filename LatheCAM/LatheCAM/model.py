@@ -101,6 +101,7 @@ class Op:
     thread_pitch: float = 2.0
     thread_length: float = 20.0
     thread_lead_in: Optional[float] = None  # None = 3x pitch
+    thread_lead_out: Optional[float] = None  # None = 1x pitch
     thread_spring_pass: bool = True
     # deepest Z the thread may reach (shoulder / undercut position); None = only
     # the stock length limits it

@@ -555,7 +555,7 @@ def thread(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     m = _approach(stock)
     p = op.thread_pitch
     lead_in = op.thread_lead_in or max(3.0 * p, 2.0)
-    lead_out = max(1.0 * p, 1.0)
+    lead_out = getattr(op, "thread_lead_out", None) or max(1.0 * p, 1.0)
     z_engage = op.z_start + lead_in
     z_cut_end = op.z_start - op.thread_length - lead_out
     safe = op.thread_major_diameter + 2.0
@@ -584,7 +584,7 @@ def _thread_internal(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     Z. B2 discipline on withdrawal: lift out at the enter diameter first.
     VERIFY — dry-run mandatory (no proven reference)."""
     p = op.thread_pitch
-    lead_out = max(1.0 * p, 1.0)
+    lead_out = getattr(op, "thread_lead_out", None) or max(1.0 * p, 1.0)
     minor = op.thread_major_diameter - 2 * thread_depth(p)
     enter = max(stock.bore_diameter - 1.0, 1.0)
     z_engage = op.z_start

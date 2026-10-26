@@ -31,6 +31,31 @@ def tools():
     return {t.name: t for t in Tool.default_library()}
 
 
+def test_thread_leads():
+    stock = Stock(diameter=18.0, length=30.0, bore_diameter=4.2)
+    tl = tools()
+    op = Op("thread", "Thread 60deg", "M10x1 lead test", z_start=-4.0,
+            thread_major_diameter=10.0, thread_pitch=1.0, thread_length=10.0,
+            thread_lead_in=5.0, thread_lead_out=2.0)
+    m = generate(op, tl["Thread 60deg"], stock)
+    th = [i for i, mo in enumerate(m) if mo.kind == "thread"]
+    z_engage = m[th[0] - 1].z   # feed move before first thread pass
+    check("lead-in engages outside face", abs(z_engage - 1.0) < 1e-9,
+          f"z_engage={z_engage}")
+    check("lead-out runs past thread end",
+          all(abs(m[i].z - (-16.0)) < 1e-9 for i in th),
+          f"ends={[m[i].z for i in th]}")
+    # defaults: lead-in 3x pitch, lead-out 1x pitch
+    op2 = Op("thread", "Thread 60deg", "M10x1 default", z_start=-4.0,
+             thread_major_diameter=10.0, thread_pitch=1.0, thread_length=10.0)
+    m2 = generate(op2, tl["Thread 60deg"], stock)
+    th2 = [i for i, mo in enumerate(m2) if mo.kind == "thread"]
+    check("default lead-in = 3x pitch", abs(m2[th2[0] - 1].z - (-1.0)) < 1e-9,
+          f"z_engage={m2[th2[0] - 1].z}")
+    check("default lead-out = 1x pitch", abs(m2[th2[0]].z - (-15.0)) < 1e-9,
+          f"end={m2[th2[0]].z}")
+
+
 def test_thread_math():
     check("thread depth P2.0 ~1.227", abs(thread_depth(2.0) - 1.227) < 0.001)
     d = thread_passes(2.0)
@@ -583,6 +608,7 @@ def test_nose_offset():
 
 
 if __name__ == "__main__":
+    test_thread_leads()
     test_thread_math()
     gcode = test_full_program()
     test_css_mode()
