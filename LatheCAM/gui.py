@@ -146,10 +146,99 @@ class CmdRegenerate:
             pass
 
 
+_LAST_SIM_OPS = set()  # remember the chooser result between runs
+
+
+def _selected_op_labels(doc):
+    """Labels of Lathe::Op objects currently selected in the tree ([] = none)."""
+    try:
+        sel = Gui.Selection.getSelectionEx()
+    except Exception:
+        return []
+    names = []
+    for sels in sel:
+        o = getattr(sels, "Object", None)
+        if o is not None and getattr(o, "LatheRole", "") == "op":
+            names.append(o.Label)
+    return names
+
+
+def _choose_ops_dialog(doc):
+    """Checkbox dialog over the document's ops; returns labels or None."""
+    from PySide import QtWidgets
+    ops = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "op"]
+    if not ops:
+        QtWidgets.QMessageBox.information(None, "LatheCAM",
+                                          "No LatheCAM operations in document.")
+        return None
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("LatheCAM \u2014 simulate which operations")
+    root = QtWidgets.QVBoxLayout(dlg)
+    root.addWidget(QtWidgets.QLabel("Animate the selected operations:"))
+    boxes = []
+    for o in ops:
+        cb = QtWidgets.QCheckBox(f"{o.Label}   ({getattr(o, 'OpType', '')})")
+        cb.setChecked(not _LAST_SIM_OPS or o.Label in _LAST_SIM_OPS)
+        root.addWidget(cb)
+        boxes.append((o, cb))
+    row = QtWidgets.QHBoxLayout()
+    all_btn = QtWidgets.QPushButton("All")
+    none_btn = QtWidgets.QPushButton("None")
+    for b in (all_btn, none_btn):
+        row.addWidget(b)
+    row.addStretch(1)
+    bbox = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    root.addLayout(row)
+    root.addWidget(bbox)
+
+    def pick(state):
+        for _o, cb in boxes:
+            cb.setChecked(state)
+    all_btn.clicked.connect(lambda: pick(True))
+    none_btn.clicked.connect(lambda: pick(False))
+    bbox.accepted.connect(dlg.accept)
+    bbox.rejected.connect(dlg.reject)
+    if not dlg.exec_():
+        return None
+    labels = [o.Label for o, cb in boxes if cb.isChecked()]
+    _LAST_SIM_OPS.clear()
+    _LAST_SIM_OPS.update(labels)
+    return labels
+
+
 class CmdSimulate:
     def GetResources(self):
         return {"MenuText": "Simulate",
-                "ToolTip": "Compute the finished part from the toolpath and animate the tool",
+                "ToolTip": "Compute the finished part from the toolpath and "
+                            "animate the tool. Select one or more operations "
+                            "in the tree first to run only those.",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        doc = Gui.ActiveDocument.Document
+        only = _selected_op_labels(doc)
+        try:
+            sim.simulate(doc, only=only or None)
+            sim.animate(doc, only=only or None)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(None, "LatheCAM simulation failed", str(e))
+            return
+        try:
+            Gui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
+
+
+class CmdSimulateChoose:
+    def GetResources(self):
+        return {"MenuText": "Simulate (choose ops)\u2026",
+                "ToolTip": "Pick which operations to animate, then simulate "
+                            "only those",
                 "Pixmap": ""}
 
     def IsActive(self):
@@ -159,8 +248,15 @@ class CmdSimulate:
         from PySide import QtWidgets
         doc = Gui.ActiveDocument.Document
         try:
-            sim.simulate(doc)
-            sim.animate(doc)
+            only = _choose_ops_dialog(doc)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(None, "LatheCAM chooser failed", str(e))
+            return
+        if not only:
+            return
+        try:
+            sim.simulate(doc, only=only)
+            sim.animate(doc, only=only)
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(None, "LatheCAM simulation failed", str(e))
             return

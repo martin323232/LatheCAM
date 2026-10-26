@@ -97,10 +97,31 @@ def envelope_solid(profile):
     return face.revolve(Vector(0, 0, 0), Vector(0, 0, 1), 360)
 
 
-def simulate(doc, group_name="Simulation"):
-    """Compute finished part from toolpath; create/replace Sim_part. Returns obj."""
+def _select(per_op, only):
+    """(cut_per_op, anim_per_op) for an op-label filter.
+
+    anim_per_op is just the selected ops. cut_per_op is every op up to and
+    INCLUDING the last selected one, so the shown material is the part as it
+    actually looks when those ops run — animating the thread tool alone
+    against raw stock would show it plunging into solid material.
+    """
+    if not only:
+        return per_op, per_op
+    sel = set(only)
+    idx = [i for i, (label, _b, _m) in enumerate(per_op) if label in sel]
+    if not idx:
+        raise ValueError("none of the selected ops belong to this document")
+    return per_op[:max(idx) + 1], [per_op[i] for i in idx]
+
+
+def simulate(doc, group_name="Simulation", only=None):
+    """Compute finished part from toolpath; create/replace Sim_part.
+
+    only = iterable of op labels to restrict the run to (see _select).
+    """
     stock, per_op = motions_for_document(doc)
-    profile = finished_envelope(stock, per_op)
+    cut, _anim = _select(per_op, only)
+    profile = finished_envelope(stock, cut)
     solid = envelope_solid(profile)
 
     old = doc.getObject(SIM_PREFIX + "part")
@@ -143,13 +164,17 @@ def _flatten(per_op):
     return segs
 
 
-def animate(doc, duration=12.0, step_ms=30):
-    """Animate a tool marker along the full path (GUI only). Non-blocking."""
+def animate(doc, duration=12.0, step_ms=30, only=None):
+    """Animate a tool marker along the path (GUI only). Non-blocking.
+
+    only = iterable of op labels: animate just those operations.
+    """
     if not App.GuiUp:
         return None
     import FreeCADGui as Gui
     stock, per_op = motions_for_document(doc)
-    segs = _flatten(per_op)
+    _cut, anim = _select(per_op, only)
+    segs = _flatten(anim)
     if not segs:
         return None
 

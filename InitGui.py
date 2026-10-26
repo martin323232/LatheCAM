@@ -36,6 +36,8 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheRegen", gui.CmdRegenerate())
         cmds.append("CmdLatheSim")
         Gui.addCommand("CmdLatheSim", gui.CmdSimulate())
+        cmds.append("CmdLatheSimChoose")
+        Gui.addCommand("CmdLatheSimChoose", gui.CmdSimulateChoose())
         self.appendToolbar("LatheCAM", cmds)
         self.appendMenu("LatheCAM", cmds)
 

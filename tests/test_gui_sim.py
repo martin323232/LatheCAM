@@ -68,6 +68,9 @@ try:
     wbs[0].Initialize()
     expected = ["CmdLatheSetup"] + [f"CmdLatheOp_{t}" for t in OPS] + ["CmdLathePost"]
     missing = [n for n in expected if n not in registered]
+    for extra in ("CmdLatheVis", "CmdLatheRegen", "CmdLatheSim", "CmdLatheSimChoose"):
+        if extra not in registered:
+            missing.append(extra)
     assert not missing, f"commands not registered: {missing}"
     print(f"REGISTER OK: {len(expected)} commands", flush=True)
 
@@ -95,6 +98,21 @@ try:
     txt = post_document(doc, out)
     assert "G21" in txt and "G32" in txt and "M30" in txt, "bad gcode"
     print(f"POST OK: {len(txt.splitlines())} lines", flush=True)
+    # op-filtered simulation (v0.3.12): animate only some ops, but show the
+    # material as it looks when those ops run (all ops up to the last chosen)
+    from LatheCAM import sim as _sim
+    ops_objs = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "op"]
+    by_type = {getattr(o, "OpType", ""): o for o in ops_objs}
+    v_full = _sim.simulate(doc).Shape.Volume
+    v_thr = _sim.simulate(doc, only=[by_type["thread"].Label]).Shape.Volume
+    v_face = _sim.simulate(doc, only=[by_type["face"].Label]).Shape.Volume
+    assert abs(v_thr - v_full) < 1e-6 * v_full, \
+        f"thread-last filter {v_thr} != full {v_full}"
+    assert v_face > v_full, f"face-only {v_face} should exceed full {v_full}"
+    _sim.simulate(doc)  # back to the whole program
+    print(f"FILTER OK: full={v_full:.0f} thread-only={v_thr:.0f} "
+          f"face-only={v_face:.0f}", flush=True)
+
     print("SIM PASS", flush=True)
 except Exception as e:  # noqa: BLE001
     import traceback
