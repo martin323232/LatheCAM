@@ -40,10 +40,11 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheSimChoose", gui.CmdSimulateChoose())
         self.appendToolbar("LatheCAM", cmds)
         self.appendMenu("LatheCAM", cmds)
-        # keep the drawn toolpaths in step with op edits
-        if hasattr(Gui, "addDocumentObserver"):
-            self._observer = gui.AutoVisObserver()
-            Gui.addDocumentObserver(self._observer)
+        # keep the drawn toolpaths in step with op edits (App-level observer:
+        # Gui.addDocumentObserver never calls Python hooks)
+        import FreeCAD as App
+        if not gui.observer_armed():
+            gui.arm_auto_observer(App)
 
     def GetClassName(self):
         return "Gui::PythonWorkbench"

@@ -163,29 +163,54 @@ def refresh_if_changed(doc, force=False):
             vis.visualize(doc)
         except Exception:
             pass                    # never break the GUI over a redraw
-    try:
-        from PySide import QtCore
-        QtCore.QTimer.singleShot(0, run)   # after the recompute has finished
-    except Exception:
-        run()
+    import FreeCAD as App
+    if getattr(App, "GuiUp", False):
+        try:
+            from PySide import QtCore
+            # defer: we are inside a recompute notification, and creating or
+            # removing objects here would re-enter the recompute
+            QtCore.QTimer.singleShot(0, run)
+            return True
+        except Exception:
+            pass                    # headless: no event loop, run inline
+    run()
     return True
 
 
 class AutoVisObserver:
     """Redraw toolpaths whenever a LatheCAM program is recomputed.
 
-    Both recompute notifications are implemented; the signature check makes
-    whichever fires second a no-op.
+    Registered with FreeCAD.addDocumentObserver (App level — the Gui-level
+    observer never fires for Python observers). slotRecomputedDocument is
+    the hook that actually gets called; the signature check in
+    refresh_if_changed keeps the redraw from re-triggering itself.
     """
 
     def __init__(self):
         _OBSERVERS.append(self)
 
+    def slotRecomputedDocument(self, doc):
+        refresh_if_changed(doc)
+
+    # older/newer bindings may use this name instead
     def afterRecompute(self, doc):
         refresh_if_changed(doc)
 
-    def slotRecomputed(self, doc):
-        refresh_if_changed(doc)
+
+def arm_auto_observer(app_module):
+    """Register the auto-redraw observer once per FreeCAD session."""
+    import builtins
+    if getattr(builtins, "_lathecam_autovis", False):
+        return None
+    obs = AutoVisObserver()
+    app_module.addDocumentObserver(obs)
+    builtins._lathecam_autovis = True
+    return obs
+
+
+def observer_armed():
+    import builtins
+    return bool(getattr(builtins, "_lathecam_autovis", False))
 
 
 class CmdRegenerate:

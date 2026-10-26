@@ -113,13 +113,16 @@ try:
     print(f"FILTER OK: full={v_full:.0f} thread-only={v_thr:.0f} "
           f"face-only={v_face:.0f}", flush=True)
 
-    # auto-redraw scheduling (v0.3.13): a change schedules, a repeat does not
+    # auto-redraw (v0.3.13): the document observer redraws when the program
+    # changes, and does nothing when it has already caught up
     from LatheCAM import gui as _gui
-    assert _gui.refresh_if_changed(doc) is True, "first refresh not scheduled"
-    assert _gui.refresh_if_changed(doc) is False, "unchanged doc re-scheduled"
+    sig_before = _gui._AUTO["sig"]
+    assert sig_before is not None, "observer never ran during recompute"
     by_type["face"].FaceDepth = 3.0
     doc.recompute()
-    assert _gui.refresh_if_changed(doc) is True, "op edit did not schedule redraw"
+    assert _gui._AUTO["sig"] != sig_before, "op edit did not redraw the paths"
+    assert _gui.refresh_if_changed(doc) is False, "caught-up doc re-scheduled"
+    _gui.AutoVisObserver().slotRecomputedDocument(doc)   # must not raise
     print("AUTOVIS OK", flush=True)
 
     print("SIM PASS", flush=True)
