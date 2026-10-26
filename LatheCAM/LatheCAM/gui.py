@@ -119,6 +119,33 @@ class CmdVisualize:
             pass
 
 
+class CmdRegenerate:
+    def GetResources(self):
+        return {"MenuText": "Regenerate toolpaths",
+                "ToolTip": "Recompute the toolpaths from the current op "
+                            "parameters and redraw them (use after editing "
+                            "op/Setup/tool values)",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        doc = Gui.ActiveDocument.Document
+        doc.recompute()
+        try:
+            vis.visualize(doc)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(None, "LatheCAM regenerate failed",
+                                           str(e))
+            return
+        try:
+            Gui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
+
+
 class CmdSimulate:
     def GetResources(self):
         return {"MenuText": "Simulate",
