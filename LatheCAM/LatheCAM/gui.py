@@ -505,3 +505,32 @@ class CmdToolLibrary:
         QtWidgets.QMessageBox.information(
             None, "Tool library saved",
             f"{len(out)} tools written to\n{user_tool_library_path()}")
+
+
+class CmdAbout:
+    """Show the running LatheCAM version and where it is loaded from."""
+
+    def GetResources(self):
+        return {"MenuText": "About LatheCAM",
+                "ToolTip": "Show the installed LatheCAM version and "
+                           "package location",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return True
+
+    def Activated(self):
+        from PySide import QtWidgets
+        import FreeCAD
+        import LatheCAM
+        import os
+        pkg = os.path.dirname(os.path.abspath(LatheCAM.__file__))
+        fc_ver = ".".join(v.strip() for v in FreeCAD.Version()[0:3])
+        QtWidgets.QMessageBox.about(
+            None, "About LatheCAM",
+            "<h3>LatheCAM %s</h3>"
+            "<p>Turning CAM for Masso G3 lathes.</p>"
+            "<p><b>Loaded from:</b><br><small>%s</small></p>"
+            "<p><b>FreeCAD</b> %s &nbsp;|&nbsp; <b>Repo:</b> "
+            "github.com/martin323232/LatheCAM</p>"
+            % (LatheCAM.__version__, pkg, fc_ver))

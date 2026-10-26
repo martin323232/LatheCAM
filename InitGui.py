@@ -38,6 +38,8 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheSim", gui.CmdSimulate())
         cmds.append("CmdLatheSimChoose")
         Gui.addCommand("CmdLatheSimChoose", gui.CmdSimulateChoose())
+        cmds.append("CmdLatheAbout")
+        Gui.addCommand("CmdLatheAbout", gui.CmdAbout())
         self.appendToolbar("LatheCAM", cmds)
         self.appendMenu("LatheCAM", cmds)
         # keep the drawn toolpaths in step with op edits (App-level observer:
