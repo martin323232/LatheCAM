@@ -140,6 +140,13 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.9
+
+- **Sim tool marker**: OD tool shank now points radially outward (holder
+  comes in from outside the stock); boring-bar shank stays axial toward the
+  face side, as on the real machine.
+
+
 ### 0.3.8
 
 - **Profile-aware OD roughing**: `od_rough` now accepts a ProfileString and
