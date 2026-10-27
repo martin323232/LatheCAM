@@ -22,7 +22,11 @@ folder into Mod.)
    post options (feed mode, CSS on/off, program number, tool changes).
 2. **Ops** — add operations (Face, OD rough/finish, ID rough/finish,
    Groove, Part, Thread). Each is a document object; edit parameters in the
-   property view. `Order` controls execution sequence.
+   property view. `Order` controls execution sequence. For profiled ops
+   (`ProfileString`), select the part's faces/edges in the 3D view and use
+   **Profile from selection** — cylinders, cones, fillets and shoulders are
+   recognised and turned into the `D,Z[,R]` string; selecting the whole part
+   object auto-detects the outer silhouette.
 3. **Tool library** — the **Tool Library** toolbar command edits names, T
    numbers, geometry, cutting data, spindle direction and notes in a table
    dialog (saved to your per-user `tools.json`). `examples/tools_masso_g3.json`
@@ -139,6 +143,43 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.15
+
+- **Profile from selection**: new toolbar command. Select faces and/or edges
+  of the revolved part in the 3D view (cylinder, cone, torus-fillet and
+  shoulder faces, or the seam edges) and LatheCAM extracts the
+  `D,Z[,R]` ProfileString — arc signs resolved from the geometry (CW → +R
+  G02, CCW → −R G03). Selecting the whole part object auto-detects the
+  outer silhouette (bore faces skipped). The string stays the source of
+  truth: it lands in the op's `ProfileString` property, editable as before,
+  and `ZEnd` is set to the profile's deepest Z.
+
+### 0.3.14
+
+- **About** command: shows the running LatheCAM version, package load path
+  and FreeCAD version — settles which copy is actually loaded.
+
+### 0.3.13
+
+- **Auto-redraw toolpaths**: a document observer re-runs the visualization
+  automatically whenever any op/setup parameter changes (signature-checked,
+  so plain recomputes don't redraw). No more manual Show toolpaths click
+  after every edit.
+
+### 0.3.12
+
+- **Simulate (choose ops)**: pick individual operations to simulate/animate;
+  `Simulate` now respects a tree selection of ops.
+
+### 0.3.11
+
+- **Regenerate toolpaths** button: recompute + redraw + fit view in one click.
+
+### 0.3.10
+
+- **ThreadLeadOut**: control the thread run-out length (default 1×pitch) on
+  both external and internal threading.
 
 ### 0.3.9
 
