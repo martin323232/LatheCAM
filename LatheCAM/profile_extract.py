@@ -13,6 +13,7 @@ cross < 0 -> CW -> R > 0 (G02), cross > 0 -> CCW -> R < 0 (G03).
 import math
 import re
 
+import FreeCAD as App
 import Part
 
 TOL = 1e-4  # chaining tolerance, mm
@@ -360,8 +361,14 @@ def lathe_shape(obj, setup=None):
     """Shape in lathe coordinates: the object shape with the Setup's
     ViewPlacement (the display transform that aligns the part to the
     spindle) applied, so extraction works for parts modelled along any
-    axis."""
+    axis.
+
+    The object's own Placement is stripped first: it only arranges the
+    part in the scene (e.g. several solids side by side), while the
+    lathe axis is always the part's local Z. Axis alignment belongs to
+    the Setup's ViewPlacement, never to the object Placement."""
     sh = obj.Shape.copy()
+    sh.Placement = App.Placement()
     if setup is not None:
         vp = getattr(setup, "ViewPlacement", None)
         if vp is not None and not vp.Rotation.isIdentity():
