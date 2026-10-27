@@ -133,6 +133,19 @@ def visualize(doc, group_name="Toolpath"):
             pass
     created.append(so)
 
+    # translucent source parts: the toolpath runs inside the part, an
+    # opaque solid hides it (users read that as "the path does not go
+    # down"). Any visible Part::Feature that is not a vis object.
+    for o in doc.Objects:
+        if o.TypeId == "Part::Feature" and getattr(o, "LatheRole", "") != "vis":
+            vo = getattr(o, "ViewObject", None)
+            if vo is not None:
+                try:
+                    if getattr(vo, "Visibility", False):
+                        vo.Transparency = 70
+                except Exception:
+                    pass
+
     for o in created:
         grp.addObject(o)
     doc.recompute()

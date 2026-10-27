@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <package format="1">
   <name>LatheCAM</name>
-  <version>0.3.17g</version>
+  <version>0.3.17h</version>
   <date>2026-10-17</date>
   <description>Turning CAM workbench for FreeCAD 1.x: facing, OD/ID rough and finish, grooving, part-off and G32 threading, with a Masso G3 lathe post-processor. Pure Python, no C++ dependencies.</description>
   <author>martin323232</author>
