@@ -358,14 +358,18 @@ class CmdProfileFromSel:
                 picks.append((s.Object, subs))
             elif hasattr(s.Object, "Shape"):
                 auto_shapes.append(s.Object)
+        setups = [o for o in doc.Objects if hasattr(o, "ViewPlacement")]
+        setup = setups[0] if setups else None
         try:
             if picks:
                 segs = []
                 for obj, subs in picks:
-                    segs.extend(profile_extract.segments(obj.Shape, subs))
+                    sh = profile_extract.lathe_shape(obj, setup)
+                    segs.extend(profile_extract.segments(sh, subs))
                 text = profile_extract.profile_from_segments(segs)
             elif auto_shapes:
-                text = profile_extract.auto_profile(auto_shapes[0].Shape)
+                sh = profile_extract.lathe_shape(auto_shapes[0], setup)
+                text = profile_extract.auto_profile(sh)
             else:
                 QtWidgets.QMessageBox.warning(
                     None, "LatheCAM profile",

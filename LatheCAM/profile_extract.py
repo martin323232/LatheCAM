@@ -59,13 +59,32 @@ def _on_axis(xy, tol=1e-6):
     return abs(xy[0]) < tol and abs(xy[1]) < tol
 
 
+def _vertex_rims(face, by_z=True):
+    """Fallback rim points from the face vertices: the two extreme
+    (rho, z) corners. Used when rim edges are BSpline-trimmed (STEP)."""
+    pts = {}
+    for v in face.Vertexes:
+        rho, z = _rhoz(v.Point)
+        pts[(round(rho, 6), round(z, 6))] = (rho, z)
+    vals = list(pts.values())
+    if len(vals) < 2:
+        return None
+    if by_z:
+        return min(vals, key=lambda p: p[1]), max(vals, key=lambda p: p[1])
+    return min(vals, key=lambda p: p[0]), max(vals, key=lambda p: p[0])
+
+
 def _rim_circles(face):
-    """(rho, z) of every circular edge of a face of revolution."""
-    out = []
+    """(rho, z) of the distinct circular rims of a face of revolution.
+    Seam-split half-faces repeat each rim twice: deduplicate."""
+    seen, out = set(), []
     for e in face.Edges:
         c = e.Curve
         if isinstance(c, Part.Circle) and _on_axis((c.Center.x, c.Center.y)):
-            out.append((c.Radius, c.Center.z))
+            key = (round(c.Radius, 6), round(c.Center.z, 6))
+            if key not in seen:
+                seen.add(key)
+                out.append((c.Radius, c.Center.z))
     return out
 
 
@@ -90,18 +109,30 @@ def segments_from_face(face):
         d = 2.0 * s.Radius
         return [Seg((d, z1), (d, z2))]
     if isinstance(s, Part.Cone):
+        if abs(abs(s.Axis.z) - 1) > 1e-6:
+            raise ValueError("cone face is not a revolution around Z")
         cs = _rim_circles(face)
-        if len(cs) < 2:
-            raise ValueError("cone face: could not find the two rim circles")
-        (r1, z1), (r2, z2) = cs[0], cs[1]
+        if len(cs) >= 2:
+            (r1, z1), (r2, z2) = cs[0], cs[1]
+        else:
+            vr = _vertex_rims(face)
+            if vr is None:
+                raise ValueError("cone face: could not find the two rims")
+            (r1, z1), (r2, z2) = vr
         if abs(z1 - z2) < 1e-9:
             return []
         return [Seg((2 * r1, z1), (2 * r2, z2))]
     if isinstance(s, Part.Toroid):
+        if abs(abs(s.Axis.z) - 1) > 1e-6:
+            raise ValueError("torus face is not a revolution around Z")
         cs = _rim_circles(face)
-        if len(cs) < 2:
-            raise ValueError("torus face: could not find the two rim circles")
-        (r1, z1), (r2, z2) = cs[0], cs[1]
+        if len(cs) >= 2:
+            (r1, z1), (r2, z2) = cs[0], cs[1]
+        else:
+            vr = _vertex_rims(face)
+            if vr is None:
+                raise ValueError("torus face: could not find the two rims")
+            (r1, z1), (r2, z2) = vr
         c = (s.MajorRadius, s.Center.z)
         rt = s.MinorRadius
         for r, z in ((r1, z1), (r2, z2)):
@@ -123,9 +154,13 @@ def segments_from_face(face):
         if abs(abs(s.Axis.z) - 1) > 1e-6:
             raise ValueError("plane face is not perpendicular to the spindle axis")
         cs = _rim_circles(face)
-        if len(cs) < 2:
-            raise ValueError("plane face: expected two circular rims")
-        (r1, z1), (r2, z2) = cs[0], cs[1]
+        if len(cs) >= 2:
+            (r1, z1), (r2, z2) = cs[0], cs[1]
+        else:
+            vr = _vertex_rims(face, by_z=False)
+            if vr is None:
+                raise ValueError("plane face: expected two rims")
+            (r1, z1), (r2, z2) = vr
         if abs(r1 - r2) < 1e-9:
             return []
         return [Seg((2 * r1, z1), (2 * r2, z2))]
@@ -172,22 +207,31 @@ def segments(shape, subnames):
     return segs
 
 
+def _dedup(segs):
+    """Drop duplicate segments (seam-split faces yield the same segment
+    twice from opposite half-faces)."""
+    seen, out = set(), []
+    for s in segs:
+        k1 = tuple(round(v, 4) for v in (s.p1[0], s.p1[1], s.p2[0], s.p2[1]))
+        k2 = (k1[2], k1[3], k1[0], k1[1])
+        key = min(k1, k2) + (round(s.radius or 0.0, 4),)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
 def chain(segs, allow_open=False):
     """Order segments into a path. Returns [(point, R), ...] where R applies
     to the segment ENDING at that point (ProfileString convention)."""
+    segs = _dedup(segs)
     if not segs:
         raise ValueError("selection gives no profile segments")
-    ends = []
-    for s in segs:
-        for p in (s.p1, s.p2):
-            deg = sum(1 for t in segs if t is not s
-                      and (_close(t.p1, p) or _close(t.p2, p)))
-            if deg == 0:
-                ends.append(p)
-    if not ends:  # closed loop: start at the face-side outer corner
-        pts = [p for s in segs for p in (s.p1, s.p2)]
-        ends = [max(pts, key=lambda p: (round(p[1], 6), p[0]))]
-    cur = max(ends, key=lambda p: (round(p[1], 6), p[0]))
+    # start at the outermost point at the face level (highest z, then
+    # largest D): the lathe profile starts at the face outer corner
+    pts = [p for s in segs for p in (s.p1, s.p2)]
+    cur = max(pts, key=lambda p: (round(p[1], 6), p[0]))
     path = [(cur, None)]
     used = [False] * len(segs)
     for _ in range(len(segs)):
@@ -209,8 +253,11 @@ def chain(segs, allow_open=False):
         path.append((p, r))
         cur = p
     if not allow_open and any(not u for u in used):
-        raise ValueError("selection is not one connected profile — "
-                         "select every face/edge of the outline")
+        leftover = [s for i, s in enumerate(segs) if not used[i]]
+        # unused radial (facing) segments are fine; anything else is a gap
+        if any(s.radius or abs(s.p1[1] - s.p2[1]) > TOL for s in leftover):
+            raise ValueError("selection is not one connected profile — "
+                             "select every face/edge of the outline")
     if len(path) > 2:
         # a closed loop repeats its start point: drop the duplicate
         if _close(path[-1][0], path[0][0]):
@@ -254,13 +301,31 @@ def auto_profile(shape):
     """Outer silhouette from every face of the solid (no manual selection).
     Faces whose max radius is under half the solid max are treated as bore
     and skipped; the walk stops at the first dead end."""
-    mx = max(math.hypot(v.Point.x, v.Point.y) for v in shape.Vertexes)
-    segs = []
+    segs, first_err = [], None
     for f in shape.Faces:
         try:
-            if f.BoundBox.XMax < 0.5 * mx and f.BoundBox.YMax < 0.5 * mx:
-                continue
             segs.extend(segments_from_face(f))
-        except ValueError:
+        except ValueError as e:
+            first_err = first_err or e
             continue
+    if not segs:
+        if first_err is not None:
+            raise first_err
+        raise ValueError("no revolved faces found in the selection")
+    # drop pure-bore segments: both ends under 40 % of the max diameter
+    maxd = max(max(s.p1[0], s.p2[0]) for s in segs)
+    segs = [s for s in segs if max(s.p1[0], s.p2[0]) >= 0.4 * maxd]
     return profile_from_segments(segs, allow_open=True)
+
+
+def lathe_shape(obj, setup=None):
+    """Shape in lathe coordinates: the object shape with the Setup's
+    ViewPlacement (the display transform that aligns the part to the
+    spindle) applied, so extraction works for parts modelled along any
+    axis."""
+    sh = obj.Shape.copy()
+    if setup is not None:
+        vp = getattr(setup, "ViewPlacement", None)
+        if vp is not None and not vp.Rotation.isIdentity():
+            sh.transformShape(vp.toMatrix())
+    return sh
