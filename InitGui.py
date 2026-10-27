@@ -28,6 +28,8 @@ class LatheCAMWorkbench(Gui.Workbench):
             name = f"CmdLatheOp_{t}"
             Gui.addCommand(name, gui.make_op_command(t))
             cmds.append(name)
+        cmds.append("CmdLatheProfileSel")
+        Gui.addCommand("CmdLatheProfileSel", gui.CmdProfileFromSel())
         cmds.append("CmdLathePost")
         Gui.addCommand("CmdLathePost", gui.CmdPost())
         cmds.append("CmdLatheVis")

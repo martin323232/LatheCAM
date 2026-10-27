@@ -80,7 +80,8 @@ def _rim_circles(face):
     seen, out = set(), []
     for e in face.Edges:
         c = e.Curve
-        if isinstance(c, Part.Circle) and _on_axis((c.Center.x, c.Center.y)):
+        if (isinstance(c, Part.Circle) and _on_axis((c.Center.x, c.Center.y))
+                and abs(abs(c.Axis.z) - 1) < 1e-6):
             key = (round(c.Radius, 6), round(c.Center.z, 6))
             if key not in seen:
                 seen.add(key)
@@ -150,12 +151,43 @@ def segments_from_face(face):
         if mid is None:
             raise ValueError("torus face has no seam arc to orient the fillet")
         return [Seg((2 * r1, z1), (2 * r2, z2), radius=rt, center=c, mid=mid)]
+    if isinstance(s, Part.Sphere):
+        # A sphere centred on the spindle axis cuts the profile plane in a
+        # circular arc of the sphere radius, centred at (0, centre.z) —
+        # ball seats, domed ends. Rims come from the face z-extent.
+        if not _on_axis((s.Center.x, s.Center.y)):
+            raise ValueError("sphere face is not centred on the spindle axis")
+        R, cz = s.Radius, s.Center.z
+        z1, z2 = face.BoundBox.ZMin, face.BoundBox.ZMax
+        if abs(z2 - z1) < 1e-9:
+            return []
+
+        def _rr(z):
+            return math.sqrt(max(R * R - (z - cz) ** 2, 0.0))
+
+        r1, r2 = _rr(z1), _rr(z2)
+        th1 = math.atan2(z1 - cz, r1)
+        th2 = math.atan2(z2 - cz, r2)
+        if th2 < th1:
+            th1, th2 = th2, th1
+        if th2 - th1 > math.pi:
+            th1 += 2 * math.pi
+        thm = 0.5 * (th1 + th2)
+        mid = (R * math.cos(thm), cz + R * math.sin(thm))
+        return [Seg((2 * r1, z1), (2 * r2, z2), radius=R, center=(0.0, cz),
+                    mid=mid)]
     if isinstance(s, Part.Plane):
         if abs(abs(s.Axis.z) - 1) > 1e-6:
             raise ValueError("plane face is not perpendicular to the spindle axis")
         cs = _rim_circles(face)
         if len(cs) >= 2:
             (r1, z1), (r2, z2) = cs[0], cs[1]
+        elif len(cs) == 1:
+            # full disc (e.g. blind-bore bottom): radial from the axis; the
+            # leading/trailing radial trim drops it again if it is not part
+            # of the outline the walk needs
+            r1, z1 = cs[0]
+            return [Seg((0.0, z1), (2 * r1, z1))]
         else:
             vr = _vertex_rims(face, by_z=False)
             if vr is None:
@@ -275,11 +307,14 @@ def chain(segs, allow_open=False):
         (d2, z2), r2 = path[1]
         if r2 is None and abs(z1 - z2) < TOL and d2 > d1 + TOL:
             path.pop(0)
-    if allow_open and len(path) > 2:
-        # auto mode: drop a trailing inward radial (annulus) segment
+    if len(path) > 2:
+        # drop a trailing inward radial: in auto mode any end annulus (it is
+        # the bore entrance, not the outer outline); in strict mode only one
+        # that runs to the spindle axis, which is never a turning endpoint
         (d1, z1), _ = path[-2]
         (d2, z2), r2 = path[-1]
-        if r2 is None and abs(z1 - z2) < TOL and d2 < d1 - TOL:
+        if (r2 is None and abs(z1 - z2) < TOL and d2 < d1 - TOL
+                and (allow_open or d2 < TOL)):
             path.pop()
     return path
 
