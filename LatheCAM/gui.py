@@ -43,9 +43,16 @@ class CmdSetup:
         Gui.Selection.addSelection(obj)
 
 
-def _selected_cyl_face():
-    """(diameter, z_top, z_bottom) of the first selected cylindrical face."""
+def _selected_cyl_face(op_type="od"):
+    """(diameter, z_top, z_bottom) merged over ALL selected faces.
+
+    Diameter comes from cylindrical faces only: the largest (outer skin) for
+    od ops, the smallest (throat) for id ops. Z-range is the union of every
+    selected face, so cones/spheres (ball seats, chamfers) extend the range.
+    """
     import FreeCADGui as Gui
+    diams = []
+    z_top = z_bot = None
     for sel in Gui.Selection.getSelectionEx():
         obj = sel.Object
         if obj is None:
@@ -61,9 +68,15 @@ def _selected_cyl_face():
                 surf = f.Surface
             except Exception:
                 continue
+            bb = f.BoundBox
+            z_top = bb.ZMax if z_top is None else max(z_top, bb.ZMax)
+            z_bot = bb.ZMin if z_bot is None else min(z_bot, bb.ZMin)
             if getattr(surf, "TypeId", "") == "Part::GeomCylinder":
-                return 2.0 * surf.Radius, f.BoundBox.ZMax, f.BoundBox.ZMin
-    return None
+                diams.append(2.0 * surf.Radius)
+    if not diams or z_top is None:
+        return None
+    dia = max(diams) if op_type.startswith("od") else min(diams)
+    return dia, z_top, z_bot
 
 
 class CmdOp:
@@ -84,7 +97,7 @@ class CmdOp:
         doc = Gui.ActiveDocument.Document
         seed = None
         if self.op_type in ("od_rough", "od_finish", "id_rough", "id_finish"):
-            seed = _selected_cyl_face()
+            seed = _selected_cyl_face(self.op_type)
         if objects.collect_program(doc)[0] is None:
             Gui.Selection.clearSelection()
             with _transaction(doc, "Create Lathe Setup"):
