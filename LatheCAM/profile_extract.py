@@ -234,6 +234,7 @@ def chain(segs, allow_open=False):
     cur = max(pts, key=lambda p: (round(p[1], 6), p[0]))
     path = [(cur, None)]
     used = [False] * len(segs)
+    prev_radial = False
     for _ in range(len(segs)):
         cands = []
         for i, s in enumerate(segs):
@@ -243,12 +244,17 @@ def chain(segs, allow_open=False):
                 cands.append((i, s, s.p2))
             elif _close(s.p2, cur):
                 cands.append((i, s, s.p1))
+        if allow_open and prev_radial:
+            # just crossed a face annulus (radial segment): an upward
+            # continuation now means the bore, not the outer silhouette
+            cands = [c for c in cands if c[2][1] <= cur[1] + TOL]
         if not cands:
             break
         # at a junction prefer the segment heading INTO the cut (lower z,
         # then larger D): makes closed loops walk face -> OD -> depth
         i, s, p = min(cands, key=lambda c: (round(c[2][1], 6), -c[2][0]))
         used[i] = True
+        prev_radial = (s.radius is None and abs(s.p1[1] - s.p2[1]) < TOL)
         r = s.signed_radius(cur, p) if s.radius else None
         path.append((p, r))
         cur = p
@@ -312,9 +318,6 @@ def auto_profile(shape):
         if first_err is not None:
             raise first_err
         raise ValueError("no revolved faces found in the selection")
-    # drop pure-bore segments: both ends under 40 % of the max diameter
-    maxd = max(max(s.p1[0], s.p2[0]) for s in segs)
-    segs = [s for s in segs if max(s.p1[0], s.p2[0]) >= 0.4 * maxd]
     return profile_from_segments(segs, allow_open=True)
 
 
