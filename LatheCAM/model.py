@@ -130,7 +130,10 @@ class Op:
             if self.target_diameter <= 0:
                 raise ValueError("target_diameter must be > 0")
             if self.target_diameter >= stock.diameter:
-                raise ValueError("target_diameter must be < stock diameter")
+                raise ValueError(
+                    f"target_diameter {self.target_diameter:g} must be < "
+                    f"stock diameter {stock.diameter:g} — the part is larger "
+                    f"than the stock, or the stock is too small")
         if self.type in ("id_rough", "id_finish"):
             if stock.bore_diameter <= 0:
                 raise ValueError("stock has no bore (set bore_diameter)")

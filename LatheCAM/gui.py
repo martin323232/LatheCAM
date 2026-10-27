@@ -43,6 +43,29 @@ class CmdSetup:
         Gui.Selection.addSelection(obj)
 
 
+def _selected_cyl_face():
+    """(diameter, z_top, z_bottom) of the first selected cylindrical face."""
+    for sel in Gui.Selection.getSelectionEx():
+        obj = sel.Object
+        if obj is None:
+            continue
+        shape = getattr(obj, "Shape", None)
+        if shape is None:
+            continue
+        for sub in list(getattr(sel, "AsSubElements", []) or []):
+            leaf = sub.split(".")[-1]
+            if not leaf.startswith("Face"):
+                continue
+            try:
+                f = shape.subShapes[leaf]
+                surf = f.Surface
+            except Exception:
+                continue
+            if surf.TypeId == "Part::GeomCylinder":
+                return 2.0 * surf.Radius, f.BoundBox.ZMax, f.BoundBox.ZMin
+    return None
+
+
 class CmdOp:
     """Creates one op of a fixed type; .op_type set at registration."""
 
@@ -50,7 +73,8 @@ class CmdOp:
 
     def GetResources(self):
         return {"MenuText": f"Op: {self.op_type}",
-                "ToolTip": f"Add a {self.op_type} operation",
+                "ToolTip": f"Add a {self.op_type} operation "
+                           "(seeds TargetDiameter from selected face)",
                 "Pixmap": ""}
 
     def IsActive(self):
@@ -58,6 +82,7 @@ class CmdOp:
 
     def Activated(self):
         doc = Gui.ActiveDocument.Document
+        seed = _selected_cyl_face() if self.op_type in ("od_rough", "od_finish") else None
         if objects.collect_program(doc)[0] is None:
             Gui.Selection.clearSelection()
             with _transaction(doc, "Create Lathe Setup"):
@@ -65,6 +90,17 @@ class CmdOp:
         Gui.Selection.clearSelection()
         with _transaction(doc, f"Create Op {self.op_type}"):
             obj = objects.create_op(doc, self.op_type)
+            if seed is not None:
+                dia, z_top, z_bot = seed
+                setup = objects.collect_program(doc)[0]
+                stock_d = float(getattr(setup, "StockDiameter", 0.0) or 0.0)
+                if dia >= stock_d:
+                    # selection is bigger than stock: grow the stock so the
+                    # op validates (raw bar must clear the finished part)
+                    setup.StockDiameter = dia + 2.0
+                obj.TargetDiameter = dia
+                obj.ZStart = z_top
+                obj.ZEnd = z_bot
         Gui.Selection.addSelection(obj)
 
 
