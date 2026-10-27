@@ -357,35 +357,36 @@ def id_rough(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
         z_in = op.z_start + stock.safe_z_clearance
         z_entry = 0.0              # plunge into the bore mouth at enter X
     final = op.target_diameter - 2 * op.stock_to_leave
-    if op.bore_back_cut:
-        z_from, z_to = op.z_end, z_entry   # cut toward the face (+Z)
-    else:
-        z_from, z_to = z_entry, op.z_end   # cut toward the chuck (-Z)
 
     m.append(Motion("rapid", enter, stock.safe_z()))
     m.append(Motion("rapid", enter, z_in))
     if z_entry < z_in - 1e-9:
         m.append(Motion("feed", enter, z_entry, feed, "plunge into bore mouth"))
-    if z_from < z_entry - 1e-9:
-        m.append(Motion("rapid", enter, z_from, 0, "position at bore bottom"))
+    if op.bore_back_cut:
+        raise ValueError("bore_back_cut is not supported yet: the tool would "
+                         "have to traverse the uncut bore mouth at a larger "
+                         "diameter. Use forward boring (toward the chuck).")
+    # Forward boring: plunge at the enter dia (inside the pre-drilled
+    # hole), then each pass steps OUT at the bottom and cuts back toward
+    # the face — stepping out at the face would drag the tool through
+    # solid material at the bore mouth.
+    m.append(Motion("feed", enter, op.z_end, feed, "plunge to bore bottom"))
 
     ps = []
     d = stock.bore_diameter + 2 * op.depth_per_pass
     while d <= final + 1e-6:
         ps.append(d)
         d += 2 * op.depth_per_pass
-    if final > stock.bore_diameter:
+    if final > stock.bore_diameter and (not ps or ps[-1] < final - 1e-6):
         ps.append(final)
     for k, d in enumerate(ps):
         label = "bore rough finish" if k == len(ps) - 1 else "bore rough"
-        m.append(Motion("feed", d, z_from, feed, f"{label} X{d:.2f}"))
-        m.append(Motion("feed", d, z_to, feed, f"{label} cut"))
-        m.append(Motion("feed", max(d - 1.0, enter), z_to, feed, "retract inward"))
-        m.append(Motion("rapid", enter, z_to, 0, "collapse in bore"))
+        m.append(Motion("feed", d, op.z_end, feed, f"{label} X{d:.2f}"))
+        m.append(Motion("feed", d, z_entry, feed, f"{label} cut to face"))
+        m.append(Motion("feed", max(d - 1.0, enter), z_entry, feed, "retract inward"))
+        m.append(Motion("rapid", enter, z_entry, 0, "collapse in bore mouth"))
         if k < len(ps) - 1:
-            m.append(Motion("rapid", enter, z_from, 0, "return to entry"))
-    if abs(z_to - z_entry) > 1e-9:
-        m.append(Motion("rapid", enter, z_entry, 0, "withdraw in bore"))
+            m.append(Motion("rapid", enter, op.z_end, 0, "return to bottom"))
     # B2: lift out of the hole at the enter diameter FIRST, then move out
     # in X; a diagonal retract from inside the bore cuts the bore mouth wall.
     m.append(Motion("rapid", enter, stock.safe_z(), 0, "lift out at enter dia"))
@@ -453,22 +454,20 @@ def id_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
         z_in = op.z_start + stock.safe_z_clearance
         z_entry = 0.0
     if op.bore_back_cut:
-        z_from, z_to = op.z_end, z_entry
-    else:
-        z_from, z_to = z_entry, op.z_end
+        raise ValueError("bore_back_cut is not supported yet: the tool would "
+                         "have to traverse the uncut bore mouth at a larger "
+                         "diameter. Use forward boring (toward the chuck).")
     m.append(Motion("rapid", enter, stock.safe_z()))
     m.append(Motion("rapid", enter, z_in))
     if z_entry < z_in - 1e-9:
         m.append(Motion("feed", enter, z_entry, feed, "plunge into bore mouth"))
-    if z_from < z_entry - 1e-9:
-        m.append(Motion("rapid", enter, z_from, 0, "position at bore bottom"))
-    m.append(Motion("feed", op.target_diameter, z_from, feed, "bore out"))
-    m.append(Motion("feed", op.target_diameter, z_to, feed, "bore finish"))
-    m.append(Motion("feed", max(op.target_diameter - 1.0, enter), z_to, feed,
+    # Step out at the BOTTOM, cut back toward the face (see id_rough).
+    m.append(Motion("feed", enter, op.z_end, feed, "plunge to bore bottom"))
+    m.append(Motion("feed", op.target_diameter, op.z_end, feed, "bore out"))
+    m.append(Motion("feed", op.target_diameter, z_entry, feed, "bore finish to face"))
+    m.append(Motion("feed", max(op.target_diameter - 1.0, enter), z_entry, feed,
                     "retract inward"))
-    m.append(Motion("rapid", enter, z_to, 0, "collapse in bore"))
-    if abs(z_to - z_entry) > 1e-9:
-        m.append(Motion("rapid", enter, z_entry, 0, "withdraw in bore"))
+    m.append(Motion("rapid", enter, z_entry, 0, "collapse in bore mouth"))
     # B2: lift out at the enter diameter before moving out in X
     m.append(Motion("rapid", enter, stock.safe_z(), 0, "lift out at enter dia"))
     m += _retract(stock)
@@ -749,6 +748,25 @@ class CollisionChecker:
                     samples = [(prev.x + (mo.x - prev.x) * s / steps,
                                 prev.z + (mo.z - prev.z) * s / steps)
                                for s in range(steps + 1)]
+                if boring and samples:
+                    # Boring drag rule: a downward axial feed may only
+                    # travel through the already-open hole — material at
+                    # X below the programmed diameter must have been cut
+                    # at that Z earlier. Catches the classic bug: radial
+                    # step-out at the bore mouth followed by a drag down
+                    # through solid. (Plunges from above the face are
+                    # legal: a straight axial descent shears a ring.)
+                    fa = self.fa
+                    x0, z0 = samples[0]
+                    j0 = self._bucket(z0)
+                    if (abs(mo.x - prev.x) <= 1e-9
+                            and mo.z < prev.z - 1e-9 and z0 <= fa + 1e-9
+                            and self.hole[j0] + tol < x0 < self.core[j0] - tol):
+                        self.problems.append(
+                            f"motion #{i} ({mo.kind}: {mo.note or 'move'}) "
+                            f"boring drag through solid at X{x0:.2f} "
+                            f"Z{z0:.2f} (hole open only to "
+                            f"X{self.hole[j0]:.2f})")
                 for x, z in samples:
                     for j in self._buckets(z):
                         if boring:
