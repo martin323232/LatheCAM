@@ -144,6 +144,21 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.16
+
+- **Profile-from-selection hardening** (found by a 20-shape verification
+  battery, OD and ID): auto silhouette no longer walks through an end face
+  into the bore; a full disc face (blind-bore bottom) now yields its radial
+  instead of raising "plane face: expected two rims"; a trailing radial that
+  runs to the spindle axis is trimmed in strict mode too, while an
+  intentional run-in to a bore is kept.
+- New `tests/test_profile_extract_shapes.py` (12 checks) and
+  `tests/test_profile_extract_shapes2.py` (12 checks): stepped shafts,
+  undercut grooves, tapers, spigots, face chamfers, end rounds, shoulder
+  fillets, bushings with counterbores, blind bores with bottom fillets,
+  internal retaining-ring grooves, countersinks — plus extracted profile →
+  `od_rough` / `id_rough` / `id_finish` → post pipeline checks.
+
 ### 0.3.15
 
 - **Profile from selection**: new toolbar command. Select faces and/or edges

@@ -329,6 +329,84 @@ class CmdSimulate:
             pass
 
 
+class CmdProfileFromSel:
+    """Fill an op's ProfileString from selected faces/edges of the part."""
+
+    def GetResources(self):
+        return {"MenuText": "Profile from selection\u2026",
+                "ToolTip": "Build the ProfileString from faces/edges selected "
+                           "in the 3D view (cylinders, cones, fillets and "
+                           "shoulders are recognised). Selecting the whole "
+                           "part object auto-detects the outer silhouette.",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        from . import profile_extract
+        doc = Gui.ActiveDocument.Document
+        target = None
+        picks = []       # (obj, [Face3, Edge5, ...])
+        auto_shapes = []  # whole objects -> auto silhouette
+        for s in Gui.Selection.getSelectionEx():
+            subs = list(s.SubElementNames or [])
+            if not subs and hasattr(s.Object, "ProfileString"):
+                target = s.Object
+            elif subs and hasattr(s.Object, "Shape"):
+                picks.append((s.Object, subs))
+            elif hasattr(s.Object, "Shape"):
+                auto_shapes.append(s.Object)
+        setups = [o for o in doc.Objects if hasattr(o, "ViewPlacement")]
+        setup = setups[0] if setups else None
+        try:
+            if picks:
+                segs = []
+                for obj, subs in picks:
+                    sh = profile_extract.lathe_shape(obj, setup)
+                    segs.extend(profile_extract.segments(sh, subs))
+                text = profile_extract.profile_from_segments(segs)
+            elif auto_shapes:
+                sh = profile_extract.lathe_shape(auto_shapes[0], setup)
+                text = profile_extract.auto_profile(sh)
+            else:
+                QtWidgets.QMessageBox.warning(
+                    None, "LatheCAM profile",
+                    "Select faces or edges of the part in the 3D view "
+                    "(or click the whole part object to auto-detect the "
+                    "outer silhouette).")
+                return
+        except ValueError as e:
+            QtWidgets.QMessageBox.critical(None, "LatheCAM profile", str(e))
+            return
+        if target is None:
+            ops = [o for o in doc.Objects if hasattr(o, "ProfileString")]
+            if not ops:
+                QtWidgets.QMessageBox.warning(
+                    None, "LatheCAM", "No LatheCAM op found - create one first.")
+                return
+            labels = [o.Label for o in ops]
+            label, ok = QtWidgets.QInputDialog.getItem(
+                None, "LatheCAM profile", "Fill profile into op:",
+                labels, 0, False)
+            if not ok:
+                return
+            target = ops[labels.index(label)]
+        pts = [tuple(float(x) for x in p.strip().split(","))
+               for p in text.split(";") if p.strip()]
+        zmin = min(p[1] for p in pts)
+        with _transaction(doc, "Profile from selection"):
+            target.ProfileString = text
+            if hasattr(target, "ZEnd"):
+                target.ZEnd = zmin
+        doc.recompute()
+        QtWidgets.QMessageBox.information(
+            None, "LatheCAM profile",
+            f"{target.Label}\n\nProfileString:\n{text}\n\n"
+            f"{len(pts)} points; ZEnd set to {zmin:.4g}.")
+
+
 class CmdSimulateChoose:
     def GetResources(self):
         return {"MenuText": "Simulate (choose ops)\u2026",
