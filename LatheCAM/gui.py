@@ -82,7 +82,9 @@ class CmdOp:
 
     def Activated(self):
         doc = Gui.ActiveDocument.Document
-        seed = _selected_cyl_face() if self.op_type in ("od_rough", "od_finish") else None
+        seed = None
+        if self.op_type in ("od_rough", "od_finish", "id_rough", "id_finish"):
+            seed = _selected_cyl_face()
         if objects.collect_program(doc)[0] is None:
             Gui.Selection.clearSelection()
             with _transaction(doc, "Create Lathe Setup"):
@@ -93,14 +95,24 @@ class CmdOp:
             if seed is not None:
                 dia, z_top, z_bot = seed
                 setup = objects.collect_program(doc)[0]
-                stock_d = float(getattr(setup, "StockDiameter", 0.0) or 0.0)
-                if dia >= stock_d:
-                    # selection is bigger than stock: grow the stock so the
-                    # op validates (raw bar must clear the finished part)
-                    setup.StockDiameter = dia + 2.0
-                obj.TargetDiameter = dia
-                obj.ZStart = z_top
-                obj.ZEnd = z_bot
+                if self.op_type in ("od_rough", "od_finish"):
+                    stock_d = float(getattr(setup, "StockDiameter", 0.0) or 0.0)
+                    if dia >= stock_d:
+                        # selection is bigger than stock: grow the stock so the
+                        # op validates (raw bar must clear the finished part)
+                        setup.StockDiameter = dia + 2.0
+                    obj.TargetDiameter = dia
+                    obj.ZStart = z_top
+                    obj.ZEnd = z_bot
+                else:
+                    # internal op: selected face is the bore to cut.
+                    # the stock needs a smaller pre-drilled bore to cut from.
+                    bore = float(getattr(setup, "BoreDiameter", 0.0) or 0.0)
+                    if bore <= 0 or bore >= dia:
+                        setup.BoreDiameter = max(dia - 2.0, 0.5)
+                    obj.TargetDiameter = dia
+                    obj.ZStart = max(z_top, 0.0)
+                    obj.ZEnd = z_bot
         Gui.Selection.addSelection(obj)
 
 
