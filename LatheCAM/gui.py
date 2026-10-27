@@ -45,23 +45,23 @@ class CmdSetup:
 
 def _selected_cyl_face():
     """(diameter, z_top, z_bottom) of the first selected cylindrical face."""
+    import FreeCADGui as Gui
     for sel in Gui.Selection.getSelectionEx():
         obj = sel.Object
         if obj is None:
             continue
-        shape = getattr(obj, "Shape", None)
-        if shape is None:
-            continue
-        for sub in list(getattr(sel, "AsSubElements", []) or []):
+        subs = (list(getattr(sel, "SubElementNames", ()) or ())
+                or list(getattr(sel, "AsSubElements", ()) or ()))
+        for sub in subs:
             leaf = sub.split(".")[-1]
             if not leaf.startswith("Face"):
                 continue
             try:
-                f = shape.subShapes[leaf]
+                f = obj.getSubObject(sub)
                 surf = f.Surface
             except Exception:
                 continue
-            if surf.TypeId == "Part::GeomCylinder":
+            if getattr(surf, "TypeId", "") == "Part::GeomCylinder":
                 return 2.0 * surf.Radius, f.BoundBox.ZMax, f.BoundBox.ZMin
     return None
 
