@@ -134,7 +134,7 @@ class CmdOp:
             try:
                 prof = profile_extract.profile_text(picks, setup)
             except ValueError as e:
-                FreeCAD.Console.printError(
+                FreeCAD.Console.PrintError(
                     f"LatheCAM: could not build a profile from the selection "
                     f"({e}); creating a plain cylinder op instead.\n")
         Gui.Selection.clearSelection()
@@ -332,7 +332,7 @@ class SourceFaceObserver:
     def __init__(self):
         self._guard = False
 
-    def setSelection(self, doc, obj, sub):
+    def _highlight(self, doc, obj):
         if self._guard or not obj:
             return
         try:
@@ -350,8 +350,14 @@ class SourceFaceObserver:
         except Exception:
             pass  # highlight is cosmetic; never break selection handling
 
+    # A tree click arrives as clearSelection + addSelection(doc, obj, sub,
+    # pnt); selection replacements (e.g. the 3D view) arrive as
+    # setSelection(doc, obj, sub). Handle both.
+    def setSelection(self, doc, obj, sub):
+        self._highlight(doc, obj)
+
     def addSelection(self, doc, obj, sub, pnt=None):
-        pass
+        self._highlight(doc, obj)
 
     def rmSelection(self, doc, obj, sub, pnt=None):
         pass

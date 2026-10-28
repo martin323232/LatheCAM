@@ -144,6 +144,14 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.22
+
+- **Fix: tree-click highlight never fired** (issue #5 follow-up): a single
+  tree click arrives at a selection observer as `clearSelection` +
+  `addSelection(doc, obj, sub, pnt)`, not `setSelection` — the highlight
+  now runs from both callbacks, so clicking an op in the tree lights its
+  source faces up as intended.
+
 ### 0.3.21
 
 - **Ops remember their source face** (issue #5): an op created from a face
