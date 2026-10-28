@@ -357,6 +357,49 @@ def auto_profile(shape):
     return profile_from_segments(segs, allow_open=True)
 
 
+# A selection made only of these is a plain cylinder or a flat: one diameter
+# describes it exactly and no profile is needed.
+PLAIN_SURFACES = ("Part::GeomCylinder", "Part::GeomPlane")
+
+
+def face_surface_id(obj, subname):
+    """Surface TypeId of a subname like "Face4" ("" when not resolvable)."""
+    try:
+        return obj.getSubObject(subname).Surface.TypeId
+    except Exception:
+        return ""
+
+
+def selection_needs_profile(picks):
+    """True when a face selection cannot be described by one diameter.
+
+    ``picks`` is [(document object, [face subnames])]. Cones, spheres and
+    tori (countersinks, ball seats, fillets) are curved along Z, so an op
+    seeded with a single diameter would machine a straight bore and leave
+    those features untouched.
+    """
+    for obj, subs in picks:
+        for sub in subs:
+            if not sub.split(".")[-1].startswith("Face"):
+                continue
+            if face_surface_id(obj, sub) not in PLAIN_SURFACES:
+                return True
+    return False
+
+
+def profile_text(picks, setup=None):
+    """ProfileString text for [(object, [face subnames])] selections."""
+    segs = []
+    for obj, subs in picks:
+        segs.extend(segments(lathe_shape(obj, setup), subs))
+    return profile_from_segments(segs)
+
+
+def profile_z_end(text):
+    """Lowest Z in a ProfileString text (the op's ZEnd)."""
+    return min(float(p.split(",")[1]) for p in text.split(";") if p.strip())
+
+
 def lathe_shape(obj, setup=None):
     """Shape in lathe coordinates: the object shape with the Setup's
     ViewPlacement (the display transform that aligns the part to the

@@ -11,6 +11,7 @@ from . import objects
 from . import vis
 from . import sim
 from . import program
+from . import profile_extract
 from .model import OP_TYPES
 
 
@@ -79,6 +80,24 @@ def _selected_cyl_face(op_type="od"):
     return dia, z_top, z_bot
 
 
+# Ops whose generator understands a ProfileString.
+PROFILE_OPS = ("od_rough", "od_finish", "id_rough", "id_finish")
+
+
+def _selection_face_picks():
+    """[(object, [Face names])] for faces currently selected in the 3D view."""
+    picks = []
+    for sel in Gui.Selection.getSelectionEx():
+        if sel.Object is None or not hasattr(sel.Object, "Shape"):
+            continue
+        subs = (list(getattr(sel, "SubElementNames", ()) or ())
+                or list(getattr(sel, "AsSubElements", ()) or ()))
+        faces = [s for s in subs if s.split(".")[-1].startswith("Face")]
+        if faces:
+            picks.append((sel.Object, faces))
+    return picks
+
+
 class CmdOp:
     """Creates one op of a fixed type; .op_type set at registration."""
 
@@ -86,8 +105,11 @@ class CmdOp:
 
     def GetResources(self):
         return {"MenuText": f"Op: {self.op_type}",
-                "ToolTip": f"Add a {self.op_type} operation "
-                           "(seeds TargetDiameter from selected face)",
+                "ToolTip": f"Add a {self.op_type} operation (seeds "
+                           "TargetDiameter from the selected face; if the "
+                           "selection contains a cone, sphere or fillet the "
+                           "ProfileString is filled too, so the tool follows "
+                           "that form instead of cutting a straight cylinder)",
                 "Pixmap": ""}
 
     def IsActive(self):
@@ -95,6 +117,7 @@ class CmdOp:
 
     def Activated(self):
         doc = Gui.ActiveDocument.Document
+        picks = _selection_face_picks() if self.op_type in PROFILE_OPS else []
         seed = None
         if self.op_type in ("od_rough", "od_finish", "id_rough", "id_finish"):
             seed = _selected_cyl_face(self.op_type)
@@ -102,6 +125,17 @@ class CmdOp:
             Gui.Selection.clearSelection()
             with _transaction(doc, "Create Lathe Setup"):
                 objects.create_setup(doc)
+        setup = objects.collect_program(doc)[0]
+        # A non-cylindrical selection must become a profile, or the op silently
+        # machines a straight bore and leaves cones/ball seats untouched.
+        prof = None
+        if picks and profile_extract.selection_needs_profile(picks):
+            try:
+                prof = profile_extract.profile_text(picks, setup)
+            except ValueError as e:
+                FreeCAD.Console.printError(
+                    f"LatheCAM: could not build a profile from the selection "
+                    f"({e}); creating a plain cylinder op instead.\n")
         Gui.Selection.clearSelection()
         with _transaction(doc, f"Create Op {self.op_type}"):
             obj = objects.create_op(doc, self.op_type)
@@ -126,6 +160,9 @@ class CmdOp:
                     obj.TargetDiameter = dia
                     obj.ZStart = max(z_top, 0.0)
                     obj.ZEnd = z_bot
+            if prof:
+                obj.ProfileString = prof
+                obj.ZEnd = profile_extract.profile_z_end(prof)
         Gui.Selection.addSelection(obj)
 
 
