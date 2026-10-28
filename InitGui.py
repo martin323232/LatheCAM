@@ -7,13 +7,24 @@ them later raises NameError at workbench activation. All imports used
 inside Initialize() must therefore happen inside Initialize() itself.
 """
 
+import os
+
 import FreeCADGui as Gui
 
 
 class LatheCAMWorkbench(Gui.Workbench):
     MenuText = "LatheCAM"
     ToolTip = "Turning CAM for Masso lathes"
-    Icon = ""
+    # chuck glyph (issue #11). FreeCAD 1.1 execs InitGui.py WITHOUT a
+    # __file__, so resolve the path through the package instead; the
+    # package __init__ is version-only, so importing it here is cheap.
+    try:
+        import LatheCAM as _pkg
+        Icon = os.path.join(os.path.dirname(_pkg.__file__),
+                            "Resources", "icons", "workbench.svg")
+        del _pkg
+    except Exception:
+        Icon = ""
 
     def Initialize(self):
         import FreeCADGui as Gui

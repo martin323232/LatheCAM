@@ -12,6 +12,13 @@ from . import vis
 from . import sim
 from . import program
 from . import profile_extract
+
+_ICON_DIR = os.path.join(os.path.dirname(__file__), "Resources", "icons")
+
+
+def _icon(name):
+    """Toolbar/menu icon path (issue #11: QtSvg renders these natively)."""
+    return os.path.join(_ICON_DIR, name + ".svg")
 from .model import OP_TYPES
 
 
@@ -31,7 +38,7 @@ class CmdSetup:
     def GetResources(self):
         return {"MenuText": "Lathe Setup",
                 "ToolTip": "Create stock + machine setup object",
-                "Pixmap": ""}
+                "Pixmap": _icon("setup")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -110,7 +117,7 @@ class CmdOp:
                            "selection contains a cone, sphere or fillet the "
                            "ProfileString is filled too, so the tool follows "
                            "that form instead of cutting a straight cylinder)",
-                "Pixmap": ""}
+                "Pixmap": _icon("op_" + self.op_type)}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -199,7 +206,7 @@ class CmdPost:
     def GetResources(self):
         return {"MenuText": "Post (Masso G3)",
                 "ToolTip": "Generate G-code for all Lathe ops",
-                "Pixmap": ""}
+                "Pixmap": _icon("post")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -225,7 +232,7 @@ class CmdVisualize:
     def GetResources(self):
         return {"MenuText": "Show toolpaths",
                 "ToolTip": "Draw rapid/feed/thread toolpaths and stock in the 3D view",
-                "Pixmap": ""}
+                "Pixmap": _icon("vis")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -415,7 +422,7 @@ class CmdRegenerate:
                 "ToolTip": "Recompute the toolpaths from the current op "
                             "parameters and redraw them (use after editing "
                             "op/Setup/tool values)",
-                "Pixmap": ""}
+                "Pixmap": _icon("regen")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -504,7 +511,7 @@ class CmdSimulate:
                 "ToolTip": "Compute the finished part from the toolpath and "
                             "animate the tool. Select one or more operations "
                             "in the tree first to run only those.",
-                "Pixmap": ""}
+                "Pixmap": _icon("sim")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -534,7 +541,7 @@ class CmdProfileFromSel:
                            "in the 3D view (cylinders, cones, fillets and "
                            "shoulders are recognised). Selecting the whole "
                            "part object auto-detects the outer silhouette.",
-                "Pixmap": ""}
+                "Pixmap": _icon("profile_sel")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -616,7 +623,7 @@ class CmdSimulateChoose:
         return {"MenuText": "Simulate (choose ops)\u2026",
                 "ToolTip": "Pick which operations to animate, then simulate "
                             "only those",
-                "Pixmap": ""}
+                "Pixmap": _icon("sim_choose")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -993,7 +1000,7 @@ class CmdSimPanel:
                            "0.25x\u20138x speed, a scrubbable timeline and "
                            "per-op checkboxes (the plain Simulate button "
                            "stays the quick one-shot path)",
-                "Pixmap": ""}
+                "Pixmap": _icon("sim_panel")}
 
     def IsActive(self):
         return Gui.ActiveDocument is not None
@@ -1033,7 +1040,7 @@ class CmdToolLibrary:
         return {"MenuText": "Tool Library",
                 "ToolTip": "Edit tool names, T numbers and cutting data "
                            "(saved to your user tools.json)",
-                "Pixmap": ""}
+                "Pixmap": _icon("tools")}
 
     def IsActive(self):
         return True
@@ -1163,7 +1170,7 @@ class CmdAbout:
         return {"MenuText": "About LatheCAM",
                 "ToolTip": "Show the installed LatheCAM version and "
                            "package location",
-                "Pixmap": ""}
+                "Pixmap": _icon("about")}
 
     def IsActive(self):
         return True

@@ -58,6 +58,19 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
             f.write("activated\n")
         print("HARNESS step: workbench activated", flush=True)
 
+        # 1b) icons (issue #11): every command Pixmap and the workbench
+        #     Icon must point at a file that actually ships
+        import LatheCAM.gui as _gi
+        _icons = ["setup", "tools", "profile_sel", "post", "vis", "regen",
+                  "sim", "sim_choose", "sim_panel", "about", "workbench"]
+        _icons += ["op_" + t for t in OPS]
+        _missing = [n for n in _icons if not os.path.exists(_gi._icon(n))]
+        assert not _missing, f"icon files missing: {_missing}"
+        _wb = Gui.getWorkbench(wb_name)
+        assert getattr(_wb, "Icon", "") and os.path.exists(_wb.Icon), \
+            f"workbench icon not set: {getattr(_wb, 'Icon', None)!r}"
+        print(f"HARNESS step: icons ok ({len(_icons)} svgs)", flush=True)
+
         # 2) patch dialogs so CmdPost needs no interaction
         from PySide import QtWidgets
         QtWidgets.QFileDialog.getSaveFileName = staticmethod(
