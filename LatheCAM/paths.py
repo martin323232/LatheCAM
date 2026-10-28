@@ -272,6 +272,80 @@ def od_finish(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
 
 # ---------------------------------------------------------------- ID (bore)
 
+def _profile_arc(p0, p1, r, step=0.3):
+    """Polyline (dia, z) samples of a profile arc from p0 to p1.
+
+    Sign convention matches id_finish: r > 0 -> G02 (cw), r < 0 -> G03. The
+    samples lie exactly ON the arc, so a polyline through them can only ever
+    leave a small ridge — it never cuts past the finish profile.
+    """
+    x0, z0 = p0[0] / 2.0, p0[1]
+    x1, z1 = p1[0] / 2.0, p1[1]
+    chord = math.hypot(x1 - x0, z1 - z0)
+    rad = abs(r)
+    if chord < 1e-12:
+        return [(p1[0], p1[1])]
+    h = math.sqrt(max(rad * rad - (chord / 2.0) ** 2, 0.0))
+    ur, uz = (x1 - x0) / chord, (z1 - z0) / chord
+    # r > 0 (G02) puts the centre on the (uz, -ur) side of the chord; checked
+    # against the D6 ball seat, whose centre must land on the spindle axis.
+    sgn = 1.0 if r > 0 else -1.0
+    cr = (x0 + x1) / 2.0 + sgn * h * uz
+    cz = (z0 + z1) / 2.0 - sgn * h * ur
+    a0 = math.atan2(z0 - cz, x0 - cr)
+    a1 = math.atan2(z1 - cz, x1 - cr)
+    sweep = a1 - a0
+    if r > 0 and sweep > 0:
+        sweep -= 2 * math.pi
+    if r < 0 and sweep < 0:
+        sweep += 2 * math.pi
+    n = max(2, int(chord / step) + 1)
+    return [(2.0 * (cr + rad * math.cos(a0 + sweep * i / n)),
+             cz + rad * math.sin(a0 + sweep * i / n)) for i in range(1, n + 1)]
+
+
+def _profile_samples(pts, step=0.3):
+    """(dia, z) polyline of a D,Z[,R] profile.
+
+    Straight segments keep their endpoints (exact); arcs are sampled. The
+    radius belongs to the segment ENDING at the point that carries it, as in
+    id_finish."""
+    out = [(pts[0][0], pts[0][1])]
+    for prev, cur in zip(pts, pts[1:]):
+        r = cur[2] if len(cur) > 2 else 0.0
+        if abs(r) > 1e-9:
+            out += _profile_arc(prev, cur, r, step)
+        else:
+            out.append((cur[0], cur[1]))
+    return out
+
+
+def _cap_polyline(samples, cap, floor):
+    """max(min(cap, dia), floor) along a polyline, with the exact crossing
+    inserted on every segment.
+
+    Capping only the vertices (the old behaviour) shortcuts the cap with a
+    chord and leaves the whole profile uncut between two vertices — a roughing
+    pass then looks like a straight cylinder down the bore."""
+    out = []
+
+    def push(x, z):
+        if not out or abs(out[-1][0] - x) > 1e-9 or abs(out[-1][1] - z) > 1e-9:
+            out.append((x, z))
+
+    for i, (d, z) in enumerate(samples):
+        if i:
+            d0, z0 = samples[i - 1]
+            dd = d - d0
+            if dd:
+                for lim in (cap, floor):
+                    if (d0 - lim) * (d - lim) < 0:
+                        t = (lim - d0) / dd
+                        push(lim, z0 + (z - z0) * t)
+        push(max(min(cap, d), floor), z)
+    return out
+
+
 def _id_rough_profile(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     """Profile-aware bore roughing: layered passes over the finish profile.
 
@@ -301,6 +375,8 @@ def _id_rough_profile(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
     kept = [p for p in pts if p[1] <= z_from + 1e-9]
     if not kept:
         raise ValueError("id_rough profile: no profile points below ZStart")
+    samples = _profile_samples(kept)
+    prev_path = None
 
     m.append(Motion("rapid", enter, stock.safe_z()))
     if op.z_start < 0:
@@ -311,16 +387,19 @@ def _id_rough_profile(op: Op, tool: Tool, stock: Stock) -> List[Motion]:
 
     for k, D in enumerate(passes):
         label = "profile rough" if k < len(passes) - 1 else "profile rough last"
-        path = [(max(min(D, p[0] - 2 * op.stock_to_leave), enter), p[1])
-                for p in kept]
+        offset = [(p[0] - 2 * op.stock_to_leave, p[1]) for p in samples]
+        path = _cap_polyline(offset, D, enter)
         if path[0][1] < z_from - 1e-9:
             path.insert(0, (path[0][0], z_from))
+        if prev_path is not None and len(path) == len(prev_path) and all(
+                abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
+                for a, b in zip(path, prev_path)):
+            continue          # this pass would remove nothing new
+        prev_path = path
+        m.append(Motion("feed", path[0][0], path[0][1], feed,
+                        f"{label} out to X{path[0][0]:.2f}"))
         prev = path[0]
-        m.append(Motion("feed", prev[0], prev[1], feed,
-                        f"{label} out to X{prev[0]:.2f}"))
         for x, z in path[1:]:
-            if abs(x - prev[0]) < 1e-9 and abs(z - prev[1]) < 1e-9:
-                continue
             m.append(Motion("feed", x, z, feed, f"{label} cut"))
             prev = (x, z)
         if path[-1][0] > enter + 1e-9:
