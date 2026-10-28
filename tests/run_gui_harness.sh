@@ -14,9 +14,19 @@ mkdir -p "$MODDIR"
 ln -s "$HARNESS_SRC" "$LINK"
 trap 'rm -rf "$LINK"' EXIT
 
-OUT=$(mktemp)
+OUT=/tmp/lathe_harness_console.log
 rm -f /tmp/lathe_harness_result.txt
-QT_QPA_PLATFORM=offscreen "$FREECAD" >"$OUT" 2>&1 &
+# QT_LOGGING_RULES: FreeCAD 1.1 deadlocks offscreen without it. Its
+# NotificationArea::showInNotificationArea() holds a non-recursive
+# mutex while showing the bubble; showing a widget calls
+# QWidget::raise(), which the offscreen platform plugin refuses with a
+# qWarning; FreeCAD's Qt message handler routes that warning into
+# Console -> NotificationArea::pushNotification, which re-locks the
+# same mutex on the same thread -> main thread deadlocks ~1 s after
+# startup, before any QTimer ever fires (verified with gdb backtrace).
+# Disabling Qt warnings keeps them out of FreeCAD's handler entirely.
+QT_QPA_PLATFORM=offscreen QT_LOGGING_RULES='*.warning=false' \
+    "$FREECAD" >"$OUT" 2>&1 &
 PID=$!
 for _ in $(seq 1 60); do
     kill -0 "$PID" 2>/dev/null || break
@@ -27,6 +37,9 @@ RES=/tmp/lathe_harness_result.txt
 [ -f "$RES" ] && cat "$RES"
 grep -aq "HARNESS PASS" "$RES" 2>/dev/null
 RC=$?
-rm -f "$OUT"
+if [ "$RC" -ne 0 ]; then
+    echo "--- console log: $OUT ---"
+    tail -30 "$OUT" 2>/dev/null
+fi
 if [ "$RC" -eq 0 ]; then echo "GUI HARNESS: PASS"; else echo "GUI HARNESS: FAIL"; fi
 [ "$RC" -eq 0 ]

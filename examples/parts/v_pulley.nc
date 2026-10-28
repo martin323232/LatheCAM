@@ -1,4 +1,4 @@
-; LatheCAM v_pulley.nc | posted 2026-10-27 08:05:21 | stock D52 x 24 mm
+; LatheCAM v_pulley.nc | posted 2026-10-28 18:44:22 | stock D52 x 24 mm
 O0100
 G40 G18 G21 G90
 (Op: face [face])
@@ -73,20 +73,20 @@ G0 X56. Z4.
 G0 X11. Z4.
 G0 X11. Z2.
 G1 X11. Z0. F84.
-G1 X15. Z0. F84.
+G1 X11. Z-20. F84.
 G1 X15. Z-20. F84.
-G1 X14. Z-20. F84.
-G0 X11. Z-20.
+G1 X15. Z0. F84.
+G1 X14. Z0. F84.
 G0 X11. Z0.
-G1 X18. Z0. F84.
+G0 X11. Z-20.
 G1 X18. Z-20. F84.
-G1 X17. Z-20. F84.
-G0 X11. Z-20.
+G1 X18. Z0. F84.
+G1 X17. Z0. F84.
 G0 X11. Z0.
-G1 X18.2 Z0. F84.
-G1 X18.2 Z-20. F84.
-G1 X17.2 Z-20. F84.
 G0 X11. Z-20.
+G1 X18.2 Z-20. F84.
+G1 X18.2 Z0. F84.
+G1 X17.2 Z0. F84.
 G0 X11. Z0.
 G0 X11. Z4.
 G0 X56. Z4.
@@ -96,10 +96,10 @@ G0 X56. Z4.
 G0 X11. Z4.
 G0 X11. Z2.
 G1 X11. Z0. F84.
-G1 X19. Z0. F84.
+G1 X11. Z-20. F84.
 G1 X19. Z-20. F84.
-G1 X18. Z-20. F84.
-G0 X11. Z-20.
+G1 X19. Z0. F84.
+G1 X18. Z0. F84.
 G0 X11. Z0.
 G0 X11. Z4.
 G0 X56. Z4.

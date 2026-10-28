@@ -240,7 +240,9 @@ def _program_signature(doc):
             continue
         h.update(o.Name.encode())
         for p in o.PropertiesList:
-            if p in ("Label", "Label2"):
+            # HiddenVisPaths is written BY visualize(); hashing it would
+            # make every redraw look like a program change and loop.
+            if p in ("Label", "Label2", "HiddenVisPaths"):
                 continue
             try:
                 h.update(repr(o.getPropertyByName(p)).encode())

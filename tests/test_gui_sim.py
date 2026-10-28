@@ -39,8 +39,14 @@ def _add_command(name, cmd):
 fake_gui.Workbench = Workbench
 fake_gui.addWorkbench = lambda wb: registered.setdefault("_wb", wb)
 fake_gui.addCommand = _add_command
+# gui.py reads the selection through getSelectionEx() (selection seeding,
+# ProfileString auto-fill); with nothing selected it must return [].
+# addSelection/clearSelection signatures kept permissive to match the
+# real FreeCADGui.Selection API (obj, subnames...).
 fake_gui.Selection = types.SimpleNamespace(
-    clearSelection=lambda: None, addSelection=lambda o: None)
+    clearSelection=lambda *a, **k: None,
+    addSelection=lambda *a, **k: None,
+    getSelectionEx=lambda *a, **k: [])
 fake_gui.ActiveDocument = None
 sys.modules["FreeCADGui"] = fake_gui
 

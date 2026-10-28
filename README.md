@@ -95,7 +95,8 @@ hand on feed hold.
 ## Built-in visualization & simulation
 
 - **Show toolpaths** — rapids (red dashed), feed cuts (green), stock
-  (translucent) drawn on the setup axis.
+  (translucent) drawn on the setup axis. One object per op per motion kind,
+  grouped under the op, so any single op's path can be hidden in the tree.
 - **Simulate** — computes the finished part from the toolpath (OD cuts
   shrink the outer envelope, boring grows the bore — the result is the
   annulus between them) and animates the tool along the program.
@@ -143,6 +144,19 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.23
+
+- **Per-op toolpath visibility** (issue #7): the 3D view now builds **one
+  object per op per motion kind** (e.g. `Op: id_rough · feed`,
+  `Op: id_finish · rapid`) inside a **sub-group per op**, instead of one
+  merged compound per kind. Toggle the eye on an op's group to hide just
+  that op's path, or on an individual object to hide only its rapids or
+  only its cutting moves. Colors stay per kind (rapid red dashed, feed
+  green solid, thread blue). Hidden paths are remembered on
+  `Setup.HiddenVisPaths` and re-applied after every auto-redraw, so
+  editing an op no longer re-shows paths you hid. Old documents migrate
+  on the first redraw.
 
 ### 0.3.22
 

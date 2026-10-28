@@ -104,6 +104,11 @@ class SetupProxy:
                         translate("Lathe", "Placement of visualization/simulation "
                                   "objects in the model (lathe Z = spindle axis)")
                         ).ViewPlacement = FreeCAD.Placement()
+        obj.addProperty("App::PropertyStringList", "HiddenVisPaths", "View",
+                        translate("Lathe", "Labels of toolpath objects the user "
+                                  "hid in the tree; re-applied after every "
+                                  "toolpath redraw")
+                        )
         obj.Proxy = self
 
     def to_stock(self) -> Stock:

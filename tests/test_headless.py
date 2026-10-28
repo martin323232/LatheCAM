@@ -132,10 +132,33 @@ n_edges = sum(len(o.Shape.Edges) for o in vis_objs if o.Name != "Vis_stock")
 check("toolpath edges built", n_edges > 20, f"{n_edges} edges")
 stock_o = doc.getObject("Vis_stock")
 check("stock cylinder shown", stock_o is not None and stock_o.Shape.isValid())
+
+# per-op grouping (issue #7): one object per (op, kind) in a per-op subgroup
+feed_objs = [o for o in vis_objs if o.TypeId == "Part::Feature"
+             and o.Label.endswith("\u00b7 feed")]
+check("per-op feed objects", len(feed_objs) >= 3,
+      str([o.Label for o in feed_objs]))
+check("feed objects belong to distinct ops",
+      len({o.LatheOp for o in feed_objs}) == len(feed_objs))
+subs = [o for o in doc.Objects if o.TypeId == "App::DocumentObjectGroup"
+        and o.Name.startswith("Vis_Op_")]
+check("per-op subgroups exist", len(subs) >= 3, str([s.Label for s in subs]))
+check("features live in their op subgroup",
+      all(any(g.TypeId == "App::DocumentObjectGroup" for g in o.InList)
+          for o in feed_objs))
+# grab a label BEFORE the rebuild below deletes these objects
+one_feed = feed_objs[0].Label
+
 vis.visualize(doc)  # re-run must replace, not duplicate
 n_vis = len([o for o in doc.Objects if o.Name.startswith("Vis_")
              and o.TypeId == "Part::Feature"])
 check("visualize re-run replaces", n_vis == n_feat, f"{n_vis} vs {n_feat}")
+
+# hidden paths persist across rebuilds via Setup.HiddenVisPaths
+setup.HiddenVisPaths = [one_feed]
+vis.visualize(doc)
+check("hidden paths persist on Setup",
+      list(setup.HiddenVisPaths) == [one_feed], str(setup.HiddenVisPaths))
 
 # --- simulation (sim.py): finished part computed from toolpath ---
 from LatheCAM import sim

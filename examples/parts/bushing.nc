@@ -1,4 +1,4 @@
-; LatheCAM bushing.nc | posted 2026-10-27 08:05:21 | stock D30 x 32 mm
+; LatheCAM bushing.nc | posted 2026-10-28 18:44:22 | stock D30 x 32 mm
 O0100
 G40 G18 G21 G90
 (Op: face [face])
@@ -78,15 +78,15 @@ G0 X34. Z4.
 G0 X11. Z4.
 G0 X11. Z2.
 G1 X11. Z0. F84.
-G1 X15. Z0. F84.
+G1 X11. Z-25. F84.
 G1 X15. Z-25. F84.
-G1 X14. Z-25. F84.
-G0 X11. Z-25.
+G1 X15. Z0. F84.
+G1 X14. Z0. F84.
 G0 X11. Z0.
-G1 X15.4 Z0. F84.
-G1 X15.4 Z-25. F84.
-G1 X14.4 Z-25. F84.
 G0 X11. Z-25.
+G1 X15.4 Z-25. F84.
+G1 X15.4 Z0. F84.
+G1 X14.4 Z0. F84.
 G0 X11. Z0.
 G0 X11. Z4.
 G0 X34. Z4.
@@ -96,10 +96,10 @@ G0 X34. Z4.
 G0 X11. Z4.
 G0 X11. Z2.
 G1 X11. Z0. F84.
-G1 X16. Z0. F84.
+G1 X11. Z-25. F84.
 G1 X16. Z-25. F84.
-G1 X15. Z-25. F84.
-G0 X11. Z-25.
+G1 X16. Z0. F84.
+G1 X15. Z0. F84.
 G0 X11. Z0.
 G0 X11. Z4.
 G0 X34. Z4.

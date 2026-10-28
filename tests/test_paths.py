@@ -518,8 +518,15 @@ def test_v035_id_rough_profile():
         last_path.append((round(m.x, 4), m.z))
     want = [(round(max(min(15.815, d - 1.0), 5.0), 4), z)
             for (d, z, *_r) in DRUM_PROFILE]
-    check("E: last pass = profile offset by leave", last_path == want,
-          f"{last_path} vs {want}")
+    # every capped+offset profile vertex must be visited; between them the path
+    # carries extra points (cap crossings, arc samples) instead of chords
+    missing = [p for p in want
+               if not any(abs(p[0] - g[0]) < 2e-3 and abs(p[1] - g[1]) < 2e-3
+                          for g in last_path)]
+    check("E: last pass = profile offset by leave", not missing,
+          f"missing {missing} from {last_path}")
+    check("E: arcs are sampled, not chorded",
+          len(last_path) > len(want), f"{len(last_path)} vs {len(want)}")
     # uniform stock left for the finish at every profile point
     worst = 0.0
     for (d, z, *_r) in DRUM_PROFILE:
@@ -634,6 +641,43 @@ def test_nose_offset():
           abs(c.core[j] - 21.6) < 1e-6, str(c.core[j]))
 
 
+def test_v0321_id_rough_follows_profile():
+    """Ball-seat bore: every rough pass must follow the profile.
+
+    Regression: capping only the profile vertices made every pass collapse to
+    one straight cylinder down the bore, so the entry cone and the seat were
+    left entirely to the finish pass."""
+    stock = Stock(diameter=30.0, length=60.0, bore_diameter=8.0)
+    tool = Tool(name="CCGT boring", tool_number=8, kind="bore", rpm=2000,
+                feed=0.025, nose_radius=0.4, width=3.5, max_depth=25.0)
+    prof = [(16.0, 0.0), (10.0, -5.196), (10.0, -14.6834),
+            (10.0, -21.3166, 6.0), (10.0, -25.0)]
+    op = Op("id_rough", "CCGT boring", "ball seat rough", z_start=0.0,
+            z_end=-25.0, depth_per_pass=1.5, stock_to_leave=0.5, profile=prof)
+    mv = generate(op, tool, stock)
+    feeds = [m for m in mv if m.kind == "feed"]
+    face = [round(m.x, 3) for m in feeds if abs(m.z) < 1e-9 and m.x > 8.0]
+    check("ball seat: passes step out at the face", len(set(face)) >= 3,
+          str(face))
+    # a pass whose cap is below the face diameter holds at the cap until the
+    # offset profile narrows to it, then follows the cone in
+    hold = [m for m in feeds if abs(m.x - 14.0) < 1e-9 and m.z < -1e-6]
+    check("ball seat: pass holds at its cap below the face", bool(hold),
+          str([(round(m.x, 2), round(m.z, 2)) for m in feeds[:4]]))
+    # the cone is followed between its vertices, not chorded in one move
+    cone = [m for m in feeds if -5.1 < m.z < -0.05 and 9.5 < m.x < 15.5]
+    check("ball seat: cone followed between vertices", len(cone) >= 2,
+          str([(round(m.x, 2), round(m.z, 2)) for m in cone]))
+    # the R6 seat bulges to 12 and must be roughed, not left to the finish
+    seat = [m for m in feeds if -21.3 < m.z < -14.7 and m.x > 9.5]
+    check("ball seat: seat bulge roughed", len(seat) >= 3,
+          str([(round(m.x, 2), round(m.z, 2)) for m in seat]))
+    check("ball seat: nothing cut past the finish profile",
+          all(m.x <= 16.0 - 1.0 + 1e-9 for m in feeds),
+          str(max(m.x for m in feeds)))
+    check("ball seat: collision-free", not check_collisions(mv, stock, boring=True))
+
+
 if __name__ == "__main__":
     test_thread_leads()
     test_thread_math()
@@ -648,6 +692,7 @@ if __name__ == "__main__":
     test_v031_id_finish_profile()
     test_v035_id_rough_profile()
     test_v038_od_rough_profile()
+    test_v0321_id_rough_follows_profile()
     test_v031_od_finish_exit()
     test_nose_offset()
     print("\n--- sample gcode (first 40 lines) ---")

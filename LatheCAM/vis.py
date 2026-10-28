@@ -1,9 +1,12 @@
 """Toolpath visualization: motions -> colored Part edges in the 3D view.
 
-Builds one Part::Feature compound per motion kind (rapid/feed/thread/dwell)
-in the XZ lathe plane (x = radius, z = axial). GUI-safe: ViewObject styling
-is applied only when a ViewObject exists (headless mode skips it).
+Builds one Part::Feature compound per (op, motion kind) in the XZ lathe
+plane (x = radius, z = axial), grouped per op so individual ops' paths can
+be hidden in the tree (issue #7). Colors stay per kind. GUI-safe: ViewObject
+styling is applied only when a ViewObject exists (headless mode skips it).
 """
+
+import re
 
 import FreeCAD as App
 import Part
@@ -61,26 +64,65 @@ def _edge(x0, z0, x1, z1):
     return Part.makeLine(Vector(x0 / 2.0, 0.0, z0), Vector(x1 / 2.0, 0.0, z1))
 
 
+def _safe_name(label):
+    """Object-Name-safe form of an op label (Names allow alphanumerics/_)."""
+    s = re.sub(r"[^A-Za-z0-9]+", "_", str(label)).strip("_")
+    return s or "op"
+
+
 def motions_to_edges(per_op):
-    """{kind: [edges]} — each Motion is a move TO (x, z) from the previous point."""
-    edges = {k: [] for k in STYLE}
-    for _label, _boring, motions in per_op:
+    """{(op_label, kind): [edges]} — each Motion is a move TO (x, z) from
+    the previous point. Grouped per op so each op's path is a separate
+    object in the tree (issue #7)."""
+    out = {}
+    for label, _boring, motions in per_op:
         prev = None
         for mo in motions:
             if mo.kind == "dwell":
                 continue  # no movement
             same = prev is not None and abs(prev[0] - mo.x) < 1e-9 \
                 and abs(prev[1] - mo.z) < 1e-9
-            if prev is not None and mo.kind in edges and not same:
-                edges[mo.kind].append(_edge(prev[0], prev[1], mo.x, mo.z))
+            if prev is not None and mo.kind in STYLE and not same:
+                out.setdefault((label, mo.kind), []).append(
+                    _edge(prev[0], prev[1], mo.x, mo.z))
             prev = (mo.x, mo.z)
-    return {k: v for k, v in edges.items() if v}
+    return out
+
+
+def _hidden_labels(doc, setup):
+    """Labels of vis objects the user hid: current tree state merged over
+    the list stored on Setup (so hides survive rebuilds and reopen)."""
+    hidden = set(str(x) for x in (getattr(setup, "HiddenVisPaths", None) or []))
+    for o in doc.Objects:
+        if o.TypeId != "Part::Feature" or not o.Name.startswith("Vis_"):
+            continue
+        vo = getattr(o, "ViewObject", None)
+        if vo is None:
+            continue  # headless: nothing to read, stored list stands
+        try:
+            shown = vo.Visibility
+        except Exception:
+            continue
+        if shown:
+            hidden.discard(o.Label)
+        else:
+            hidden.add(o.Label)
+    return hidden
 
 
 def visualize(doc, group_name="Toolpath"):
-    """Create/replace colored toolpath objects (+ translucent stock). Returns objects."""
+    """Create/replace per-op colored toolpath objects (+ translucent stock).
+
+    One Part::Feature per (op, kind) inside a per-op subgroup, so Space on
+    an op's object toggles just that op's path. Hidden paths are remembered
+    on Setup.HiddenVisPaths and re-applied after the rebuild. Returns objects.
+    """
     stock, per_op = motions_for_document(doc)
+    setup, _ops = collect_program(doc)
     vp = view_placement(doc)
+
+    # read hide state BEFORE the old objects are deleted
+    hidden = _hidden_labels(doc, setup)
 
     # remove previous visualization objects (group + features share the Vis_ prefix)
     for o in list(doc.Objects):
@@ -101,16 +143,30 @@ def visualize(doc, group_name="Toolpath"):
 
     created = []
     edges = motions_to_edges(per_op)
-    for kind, segs in edges.items():
-        name = "Vis_" + kind
-        old = doc.getObject(name)
-        if old:
-            doc.removeObject(name)
-        obj = doc.addObject("Part::Feature", name)
+    op_groups = {}   # op_label -> (subgroup, safe name)
+    used_safe = set()
+    for (op_label, kind), segs in edges.items():
+        if op_label in op_groups:
+            sub, safe = op_groups[op_label]
+        else:
+            base = safe = _safe_name(op_label)
+            n = 2
+            while safe in used_safe:   # two distinct ops sanitize alike
+                safe = f"{base}_{n}"
+                n += 1
+            used_safe.add(safe)
+            sub = doc.addObject("App::DocumentObjectGroup", "Vis_Op_" + safe)
+            sub.Label = str(op_label)
+            grp.addObject(sub)
+            op_groups[op_label] = (sub, safe)
+        obj = doc.addObject("Part::Feature", "Vis_" + safe + "_" + kind)
+        obj.Label = f"{op_label} \u00b7 {kind}"
         obj.Shape = Part.Compound(segs)
         obj.Placement = vp
         obj.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "vis"
+        obj.addProperty("App::PropertyString", "LatheOp", "Lathe").LatheOp = str(op_label)
         style(obj, *STYLE[kind])
+        sub.addObject(obj)
         created.append(obj)
 
     # translucent stock cylinder for context
@@ -132,6 +188,7 @@ def visualize(doc, group_name="Toolpath"):
         except Exception:
             pass
     created.append(so)
+    grp.addObject(so)  # per-op features live in their subgroups, not here
 
     # translucent source parts: the toolpath runs inside the part, an
     # opaque solid hides it (users read that as "the path does not go
@@ -146,7 +203,28 @@ def visualize(doc, group_name="Toolpath"):
                 except Exception:
                     pass
 
+    # re-apply the user's hides (headless: no ViewObject, silently skipped)
     for o in created:
-        grp.addObject(o)
+        vo = getattr(o, "ViewObject", None)
+        if vo is not None and o.Label in hidden:
+            try:
+                vo.Visibility = False
+            except Exception:
+                pass
+
+    # persist the hide list on Setup so it survives rebuilds and reopen
+    if setup is not None:
+        if "HiddenVisPaths" not in setup.PropertiesList:
+            try:  # documents created before 0.3.23: migrate on first redraw
+                setup.addProperty("App::PropertyStringList", "HiddenVisPaths",
+                                  "View")
+            except Exception:
+                setup = None
+    if setup is not None:
+        try:
+            setup.HiddenVisPaths = sorted(hidden)
+        except Exception:
+            pass
+
     doc.recompute()
     return created
