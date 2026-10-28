@@ -660,9 +660,101 @@ def _fill_op_list(lst, ops):
         lst.addItem(it)
 
 
+def _panel_vis_features(doc):
+    """The per-op drawn toolpath objects (issue #7 Vis_* features).
+
+    Vis_stock carries no LatheOp and is excluded: it is context, not a path.
+    """
+    return [o for o in doc.Objects
+            if o.TypeId == "Part::Feature"
+            and getattr(o, "LatheRole", "") == "vis"
+            and getattr(o, "LatheOp", "")]
+
+
+def _panel_checked_labels(panel):
+    """Op labels currently ticked in the panel checklist."""
+    from PySide import QtCore
+    lst = panel.get("list")
+    out = []
+    if lst is None:
+        return out
+    for i in range(lst.count()):
+        it = lst.item(i)
+        if it.checkState() == QtCore.Qt.Checked:
+            out.append(str(it.data(QtCore.Qt.UserRole)))
+    return out
+
+
+def _panel_apply_paths(panel):
+    """Mirror the checklist onto the drawn toolpaths (issue #8).
+
+    While the panel is open it owns toolpath visibility: every Vis_* path
+    follows its op's checkbox and Setup.HiddenVisPaths is kept in sync so
+    an auto-redraw cannot revert the view. The tree's own state was
+    snapshotted at open and is restored when the panel closes.
+    """
+    doc = panel.get("doc")
+    if doc is None:
+        return
+    labels = set(_panel_checked_labels(panel))
+    setup = objects.collect_program(doc)[0]
+    can_store = setup is not None and "HiddenVisPaths" in setup.PropertiesList
+    hidden = set(str(x) for x in (getattr(setup, "HiddenVisPaths", None) or [])) \
+        if setup is not None else set()
+    for o in _panel_vis_features(doc):
+        show = o.LatheOp in labels
+        if can_store:
+            (hidden.discard if show else hidden.add)(o.Label)
+        vo = getattr(o, "ViewObject", None)
+        if vo is not None:
+            try:
+                vo.Visibility = show
+            except Exception:
+                pass
+    if can_store:
+        try:
+            setup.HiddenVisPaths = sorted(hidden)
+        except Exception:
+            pass
+
+
+def _panel_snapshot_paths(panel):
+    """Remember the tree's own toolpath visibility for restore-on-close."""
+    doc = panel.get("doc")
+    if doc is None:
+        return
+    setup = objects.collect_program(doc)[0]
+    panel["vis_snapshot"] = vis._hidden_labels(doc, setup)
+
+
+def _panel_restore_paths(panel):
+    """Give the tree its visibility state back when the panel closes."""
+    snap = panel.get("vis_snapshot")
+    doc = panel.get("doc")
+    if snap is None or doc is None:
+        return
+    setup = objects.collect_program(doc)[0]
+    if setup is not None and "HiddenVisPaths" in setup.PropertiesList:
+        try:
+            setup.HiddenVisPaths = sorted(snap)
+        except Exception:
+            pass
+    for o in _panel_vis_features(doc):
+        vo = getattr(o, "ViewObject", None)
+        if vo is not None:
+            try:
+                vo.Visibility = o.Label not in snap
+            except Exception:
+                pass
+
+
 def _open_sim_panel(doc):
     """Create or raise the simulation dock (issue #8): transport, speed,
-    scrubbable timeline and per-op checkboxes over a seekable SimPlayer."""
+    scrubbable timeline and per-op checkboxes over a seekable SimPlayer.
+
+    While open, the checklist also drives toolpath display: checked ops
+    show their drawn path, unchecked ops hide theirs (issue #8 follow-up);
+    closing the dock restores the tree's own visibility state."""
     from PySide import QtCore, QtWidgets
     ops = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "op"]
     if not ops:
@@ -677,6 +769,12 @@ def _open_sim_panel(doc):
             existing.raise_()
             if _SIM_PANEL.get("doc") is not doc:
                 _sim_panel_rebind(_SIM_PANEL, doc)
+            else:
+                # reopened after a close: the tree may have changed while
+                # the panel was away - re-snapshot, then let the checklist
+                # (still holding its previous ticks) drive the display.
+                _panel_snapshot_paths(_SIM_PANEL)
+                _panel_apply_paths(_SIM_PANEL)
             return existing
         except RuntimeError:
             _SIM_PANEL.clear()      # C++ side deleted (session teardown)
@@ -743,17 +841,15 @@ def _open_sim_panel(doc):
                        "slider": slider, "status": status, "speed": speed,
                        "play": play_btn, "pause": pause_btn,
                        "stop": stop_btn,
-                       "player": player, "syncing": False, "bulk": False})
+                       "player": player, "syncing": False, "bulk": False,
+                       "vis_snapshot": None})
     player.update_material = True
     player.ensure_marker()
+    _panel_snapshot_paths(_SIM_PANEL)   # tree state to restore on close
+    _panel_apply_paths(_SIM_PANEL)      # all checked: show every drawn path
 
     def checked_labels():
-        out = []
-        for i in range(lst.count()):
-            it = lst.item(i)
-            if it.checkState() == QtCore.Qt.Checked:
-                out.append(str(it.data(QtCore.Qt.UserRole)))
-        return out
+        return _panel_checked_labels(_SIM_PANEL)
 
     def update_status(t):
         p = _SIM_PANEL.get("player")
@@ -780,6 +876,7 @@ def _open_sim_panel(doc):
         if p is None:
             return
         labels = checked_labels()
+        _panel_apply_paths(_SIM_PANEL)   # checklist owns the drawn paths
         if not labels:
             p.pause()
             _SIM_PANEL["syncing"] = True
@@ -847,6 +944,7 @@ def _open_sim_panel(doc):
             p = _SIM_PANEL.get("player")
             if p is not None:
                 p.pause()
+            _panel_restore_paths(_SIM_PANEL)   # tree gets its state back
     dock.visibilityChanged.connect(on_visibility)
 
     try:
@@ -869,12 +967,15 @@ def _sim_panel_rebind(panel, doc):
         player = sim.SimPlayer(doc)
     except Exception:
         return                      # new doc has no valid program: keep old
+    _panel_restore_paths(panel)     # old doc gets its tree state back
     panel["player"].pause()
     panel["player"] = player
     panel["doc"] = doc
     panel["bulk"] = True
     _fill_op_list(panel["list"], ops)
     panel["bulk"] = False
+    _panel_snapshot_paths(panel)    # new doc: remember its tree state
+    _panel_apply_paths(panel)       # checklist drives the new doc's display
     player.update_material = True
     player.on_position = panel.get("update_status")
     player.ensure_marker()

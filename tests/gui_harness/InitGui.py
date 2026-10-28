@@ -138,7 +138,22 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
 
         # 7) simulation panel (issue #8): dock opens over the Harness doc,
         #    the slider scrubs the seekable player, the checklist rebuilds
-        #    the timeline, transport works, closing the dock pauses.
+        #    the timeline, transport works, closing the dock pauses. The
+        #    checklist also owns toolpath display while open (issue #8
+        #    follow-up): checked ops show their drawn path, unchecked ops
+        #    hide theirs, and closing restores the tree's own state.
+        Gui.runCommand("CmdLatheVis", 0)
+        vis_feats = [o for o in doc.Objects
+                     if o.TypeId == "Part::Feature"
+                     and getattr(o, "LatheRole", "") == "vis"
+                     and getattr(o, "LatheOp", "")]
+        assert vis_feats, "show toolpaths drew no per-op objects"
+        # tree state before the panel: hide one path of the op that will
+        # be checklist item(0) (same doc order _fill_op_list uses)
+        _hide_label = ops[0].Label
+        tree_hidden = [o for o in vis_feats if o.LatheOp == _hide_label]
+        assert tree_hidden, f"op {_hide_label!r} drew no paths"
+        tree_hidden[0].ViewObject.Visibility = False
         Gui.runCommand("CmdLatheSimPanel", 0)
         from LatheCAM import gui as _gui8
         pan = _gui8._SIM_PANEL
@@ -158,11 +173,25 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         pan["speed"].setCurrentIndex(2)          # back to 1x
         from PySide import QtCore as _tc
         first_label = str(pan["list"].item(0).data(_tc.Qt.UserRole))
+        assert first_label == _hide_label, "checklist order != doc order"
+        # panel opened with everything checked: the tree-hidden path is shown
+        assert tree_hidden[0].ViewObject.Visibility, \
+            "panel open did not follow the (all-checked) checklist"
         pan["list"].item(0).setCheckState(_tc.Qt.Unchecked)
         assert first_label not in pan["player"].op_labels, \
             "unchecked op still in the timeline"
+        for _vf in vis_feats:
+            if _vf.LatheOp == first_label:
+                assert not _vf.ViewObject.Visibility, \
+                    "uncheck did not hide the op's drawn path"
+                assert _vf.Label in (setup.HiddenVisPaths or []), \
+                    "panel hide not persisted to HiddenVisPaths"
         pan["list"].item(0).setCheckState(_tc.Qt.Checked)
         assert first_label in pan["player"].op_labels, "recheck lost the op"
+        for _vf in vis_feats:
+            if _vf.LatheOp == first_label:
+                assert _vf.ViewObject.Visibility, \
+                    "recheck did not re-show the op's drawn path"
         pan["play"].click()
         assert pan["player"].playing(), "play did not start the timer"
         for _ in range(50):
@@ -174,6 +203,13 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         pan["dock"].close()
         Gui.updateGui()
         assert not pan["player"].playing(), "closing the dock did not pause"
+        # close restores the tree state captured at open: the first op's
+        # path was hidden in the tree before the panel opened, so it must
+        # be hidden again and HiddenVisPaths back to that snapshot.
+        assert not tree_hidden[0].ViewObject.Visibility, \
+            "close did not restore the tree's hidden path"
+        assert tree_hidden[0].Label in (setup.HiddenVisPaths or []), \
+            "close did not restore HiddenVisPaths"
         print(f"HARNESS step: sim panel ok "
               f"({len(pan['player'].segments)} segments)", flush=True)
 
