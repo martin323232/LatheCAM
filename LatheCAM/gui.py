@@ -641,6 +641,14 @@ class CmdToolLibrary:
         os.makedirs(user_tool_dir(), exist_ok=True)
         with open(user_tool_library_path(), "w", encoding="utf-8") as f:
             json.dump(out, f, indent=1)
+        # live-refresh the ToolName dropdowns in every open document
+        try:
+            import FreeCAD as _App
+            from .objects import refresh_tool_enums
+            for _d in _App.listDocuments().values():
+                refresh_tool_enums(_d)
+        except Exception:
+            pass
         QtWidgets.QMessageBox.information(
             None, "Tool library saved",
             f"{len(out)} tools written to\n{user_tool_library_path()}")

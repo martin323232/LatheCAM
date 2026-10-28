@@ -131,8 +131,9 @@ class OpProxy:
         obj.addProperty("App::PropertyString", "LatheRole", "Lathe").LatheRole = "op"
         obj.addProperty("App::PropertyString", "OpType", "Op",
                         translate("Lathe", "Operation type")).OpType = op_type
-        obj.addProperty("App::PropertyString", "ToolName", "Op",
-                        translate("Lathe", "Tool name from library")).ToolName = "OD-rough"
+        obj.addProperty("App::PropertyEnumeration", "ToolName", "Op",
+                        translate("Lathe", "Tool name from library"))
+        _set_tool_enum(obj, TOOL_FOR_OP.get(op_type, "OD-rough"))
         obj.addProperty("App::PropertyString", "Comment", "Op",
                         translate("Lathe", "Comment")).Comment = ""
         obj.addProperty("App::PropertyInteger", "Order", "Op",
@@ -244,6 +245,16 @@ class OpProxy:
 
     def onDocumentRestored(self, obj):
         self.Object = obj
+        # migrate pre-enumeration documents: ToolName was a plain string
+        try:
+            if obj.getTypeIdOfProperty("ToolName") == "App::PropertyString":
+                cur = obj.ToolName
+                obj.removeProperty("ToolName")
+                obj.addProperty("App::PropertyEnumeration", "ToolName", "Op",
+                                translate("Lathe", "Tool name from library"))
+                _set_tool_enum(obj, cur or TOOL_FOR_OP.get(obj.OpType, "OD-rough"))
+        except Exception:
+            pass
 
 
 def create_setup(doc, name="Setup"):
@@ -266,6 +277,43 @@ TOOL_FOR_OP = {
     "part": "Part 2mm",
     "thread": "Thread 60deg",
 }
+
+
+def _tool_names(obj=None):
+    """Tool names for the ToolName dropdown: built-in + user library."""
+    names = [t.name for t in Tool.default_library()]
+    try:
+        from .program import load_tools
+        names = sorted(load_tools().keys())
+    except Exception:
+        pass
+    return names
+
+
+def _set_tool_enum(obj, value):
+    """Populate the ToolName enumeration and select ``value``.
+
+    The current value is always kept in the list so a tool deleted from
+    the library never wipes an existing op's setting.
+    """
+    names = _tool_names(obj)
+    cur = getattr(obj, "ToolName", None)
+    for extra in (value, cur):
+        if extra and extra not in names:
+            names.append(extra)
+    try:
+        obj.ToolName = names  # list assignment defines the enumeration
+        if value:
+            obj.ToolName = value
+    except Exception:
+        pass
+
+
+def refresh_tool_enums(doc):
+    """Re-read the library into every op's ToolName dropdown in ``doc``."""
+    for o in doc.Objects:
+        if getattr(o, "LatheRole", "") == "op":
+            _set_tool_enum(o, None)
 
 
 def create_op(doc, op_type, name=None):
