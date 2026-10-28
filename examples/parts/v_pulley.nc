@@ -1,4 +1,4 @@
-; LatheCAM v_pulley.nc | posted 2026-10-28 18:44:22 | stock D52 x 24 mm
+; LatheCAM v_pulley.nc | posted 2026-10-28 19:08:49 | stock D52 x 24 mm
 O0100
 G40 G18 G21 G90
 (Op: face [face])

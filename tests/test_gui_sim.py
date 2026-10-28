@@ -131,6 +131,28 @@ try:
     _gui.AutoVisObserver().slotRecomputedDocument(doc)   # must not raise
     print("AUTOVIS OK", flush=True)
 
+    # post-dialog default path (issue #9): <DocName>_<stamp>.nc next to
+    # the saved document; unsaved/unnamed docs fall back to ~
+    p = _gui._default_post_path(doc)
+    assert p.startswith(os.path.expanduser("~/") + "Sim_"), p
+    assert p.endswith(".nc") and len(p.split("_")[-2]) == 10, p  # date_time stamp kept
+    doc9 = FreeCAD.newDocument("D6-test")
+    doc9.Label = 'a/b:c*d?e"f<g>h|i'
+    p9 = _gui._default_post_path(doc9)
+    assert p9.startswith(os.path.expanduser("~/") + "a_b_c_d_e_f_g_h_i_"), p9
+    os.makedirs("/tmp/lathecam_issue9", exist_ok=True)
+    doc9.saveAs("/tmp/lathecam_issue9/D6-test.FCStd")
+    assert doc9.FileName, "saveAs did not set FileName"
+    # saveAs resets Label to the file base name; saved doc defaults to its folder
+    assert _gui._default_post_path(doc9).startswith(
+        "/tmp/lathecam_issue9/D6-test_"), "saved doc must default to doc folder"
+    FreeCAD.closeDocument(doc9.Name)
+    docu = FreeCAD.newDocument()  # truly unnamed ("Unnamed"), unsaved
+    assert _gui._default_post_path(docu).startswith(
+        os.path.expanduser("~/lathe_program_")), "unsaved fallback broken"
+    FreeCAD.closeDocument(docu.Name)
+    print("POSTDEFAULT OK", flush=True)
+
     print("SIM PASS", flush=True)
 except Exception as e:  # noqa: BLE001
     import traceback

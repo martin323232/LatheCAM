@@ -175,6 +175,26 @@ class CmdOp:
         Gui.Selection.addSelection(obj)
 
 
+def _default_post_path(doc):
+    """Default Post dialog path (issue #9): <DocName>_<stamp>.nc.
+
+    Saved documents default to the document's own folder next to the
+    .FCStd; unsaved or still-unnamed documents fall back to the old
+    ~/lathe_program_<stamp>.nc. The timestamp stays so repeated posts
+    never overwrite silently.
+    """
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    name = (getattr(doc, "Label", "") or doc.Name or "").strip()
+    for ch in '\\/:*?"<>|':
+        name = name.replace(ch, "_")
+    name = name.strip(". ")  # Windows: no trailing dots/spaces
+    if not name or name.lower().startswith("unnamed"):
+        name = "lathe_program"
+    folder = (os.path.dirname(doc.FileName) if doc.FileName
+              else os.path.expanduser("~"))
+    return os.path.join(folder, f"{name}_{stamp}.nc")
+
+
 class CmdPost:
     def GetResources(self):
         return {"MenuText": "Post (Masso G3)",
@@ -187,10 +207,8 @@ class CmdPost:
     def Activated(self):
         from PySide import QtGui, QtWidgets
         doc = Gui.ActiveDocument.Document
-        stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            None, "Post G-code",
-            os.path.expanduser(f"~/lathe_program_{stamp}.nc"),
+            None, "Post G-code", _default_post_path(doc),
             "G-code (*.nc *.ngc *.tap);;All files (*)")
         if not path:
             return

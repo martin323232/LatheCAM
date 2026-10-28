@@ -145,6 +145,16 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.24
+
+- **Post defaults to the document name** (issue #9): the Post save dialog
+  now opens at `<DocName>_<date>_<time>.nc` (e.g. `D6-test_2026-10-28_1856.nc`)
+  instead of `~/lathe_program_...`, so each `.nc` is traceable to its model.
+  Illegal filename characters are replaced with `_`. If the document is
+  saved, the dialog opens **in the document's own folder**; unsaved or
+  still-unnamed documents keep the old `~/lathe_program_<stamp>.nc`
+  fallback. The timestamp stays, so repeated posts never overwrite silently.
+
 ### 0.3.23
 
 - **Per-op toolpath visibility** (issue #7): the 3D view now builds **one
