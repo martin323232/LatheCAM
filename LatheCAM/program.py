@@ -52,9 +52,17 @@ def load_tools(path: str = None) -> Dict[str, Tool]:
     else:
         base = _read_tool_file(TOOL_LIBRARY_PATH) or Tool.default_library()
     tools = {t.name: t for t in base}
+    user_tools = {}
     if not path:
-        for t in _read_tool_file(user_tool_library_path()):
-            tools[t.name] = t
+        user_tools = {t.name: t for t in _read_tool_file(user_tool_library_path())}
+        tools.update(user_tools)
+    # The user file is the real machine table: a user tool wins its T number,
+    # so any built-in placeholder squatting on that T is dropped.
+    if user_tools:
+        user_nums = {t.tool_number for t in user_tools.values()}
+        for name in [n for n, t in tools.items()
+                     if n not in user_tools and t.tool_number in user_nums]:
+            del tools[name]
     seen = {}
     for t in tools.values():
         if t.tool_number in seen:
