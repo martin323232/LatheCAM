@@ -136,6 +136,47 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         print(f"HARNESS step: ball-seat profile ok ({prof})", flush=True)
         FreeCAD.closeDocument(bdoc.Name)
 
+        # 7) simulation panel (issue #8): dock opens over the Harness doc,
+        #    the slider scrubs the seekable player, the checklist rebuilds
+        #    the timeline, transport works, closing the dock pauses.
+        Gui.runCommand("CmdLatheSimPanel", 0)
+        from LatheCAM import gui as _gui8
+        pan = _gui8._SIM_PANEL
+        assert pan.get("dock") is not None, "sim panel did not open"
+        assert pan["player"].segments, "player timeline empty"
+        assert pan["player"].total > 0, "player total zero"
+        Gui.updateGui()
+        pan["slider"].setValue(500)
+        Gui.updateGui()
+        assert pan["player"].t > 0, "slider scrub did not move the player"
+        assert "Op" in pan["status"].text(), \
+            f"status line empty: {pan['status'].text()!r}"
+        pan["slider"].setValue(0)
+        assert pan["player"].t == 0.0, "scrub back to start failed"
+        pan["speed"].setCurrentIndex(5)          # 8x
+        assert pan["player"].speed == 8.0, "speed combo not wired"
+        pan["speed"].setCurrentIndex(2)          # back to 1x
+        from PySide import QtCore as _tc
+        first_label = str(pan["list"].item(0).data(_tc.Qt.UserRole))
+        pan["list"].item(0).setCheckState(_tc.Qt.Unchecked)
+        assert first_label not in pan["player"].op_labels, \
+            "unchecked op still in the timeline"
+        pan["list"].item(0).setCheckState(_tc.Qt.Checked)
+        assert first_label in pan["player"].op_labels, "recheck lost the op"
+        pan["play"].click()
+        assert pan["player"].playing(), "play did not start the timer"
+        for _ in range(50):
+            pan["player"]._tick()    # drive manually: _run blocks the loop
+        assert pan["player"].t > 0, "ticks did not advance the position"
+        pan["stop"].click()
+        assert not pan["player"].playing(), "stop left the timer running"
+        assert pan["player"].t == 0.0, "stop did not rewind"
+        pan["dock"].close()
+        Gui.updateGui()
+        assert not pan["player"].playing(), "closing the dock did not pause"
+        print(f"HARNESS step: sim panel ok "
+              f"({len(pan['player'].segments)} segments)", flush=True)
+
         with open(result_path, "a") as f:
             f.write("HARNESS PASS\n")
         print("HARNESS PASS", flush=True)

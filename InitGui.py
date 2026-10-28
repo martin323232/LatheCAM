@@ -40,6 +40,8 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheSim", gui.CmdSimulate())
         cmds.append("CmdLatheSimChoose")
         Gui.addCommand("CmdLatheSimChoose", gui.CmdSimulateChoose())
+        cmds.append("CmdLatheSimPanel")
+        Gui.addCommand("CmdLatheSimPanel", gui.CmdSimPanel())
         cmds.append("CmdLatheAbout")
         Gui.addCommand("CmdLatheAbout", gui.CmdAbout())
         self.appendToolbar("LatheCAM", cmds)

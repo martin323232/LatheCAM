@@ -74,7 +74,8 @@ try:
     wbs[0].Initialize()
     expected = ["CmdLatheSetup"] + [f"CmdLatheOp_{t}" for t in OPS] + ["CmdLathePost"]
     missing = [n for n in expected if n not in registered]
-    for extra in ("CmdLatheVis", "CmdLatheRegen", "CmdLatheSim", "CmdLatheSimChoose"):
+    for extra in ("CmdLatheVis", "CmdLatheRegen", "CmdLatheSim",
+                  "CmdLatheSimChoose", "CmdLatheSimPanel"):
         if extra not in registered:
             missing.append(extra)
     assert not missing, f"commands not registered: {missing}"
@@ -118,6 +119,43 @@ try:
     _sim.simulate(doc)  # back to the whole program
     print(f"FILTER OK: full={v_full:.0f} thread-only={v_thr:.0f} "
           f"face-only={v_face:.0f}", flush=True)
+
+    # seekable player (issue #8): pure position math, headless-safe —
+    # the panel drives seek() from its slider, both directions
+    from LatheCAM import sim as _sim3
+    pl = _sim3.SimPlayer(doc, duration=10.0)
+    assert pl.segments and pl.total > 0, "empty timeline"
+    n_all = len(pl.segments)
+    pl.seek(-5.0)
+    assert pl.t == 0.0, "seek must clamp at 0"
+    pl.seek(pl.total + 5.0)
+    assert abs(pl.t - pl.total) < 1e-9, "seek must clamp at total"
+    s_end, f_end = pl.segment_at(pl.t)
+    assert f_end == 1.0 and s_end is pl.segments[-1], "end-of-program seek"
+    pl.seek(pl.total / 2.0)
+    s_mid, f_mid = pl.segment_at(pl.t)
+    assert s_mid is not None and 0.0 <= f_mid <= 1.0, "mid seek"
+    idx = [pl.segment_at(pl.total * k / 20.0)[0].op for k in range(21)]
+    assert idx == sorted(idx), "segment_at must be monotone in t"
+    face_label = by_type["face"].Label
+    pl.set_ops([face_label])
+    assert pl.op_labels == [face_label], "subset op list wrong"
+    assert all(s.label == face_label for s in pl.segments), "subset leaked"
+    assert 0 < len(pl.segments) < n_all, "subset should shrink the timeline"
+    pl.set_ops(None)
+    assert len(pl.segments) == n_all, "set_ops(None) must restore all ops"
+    pl.set_speed(4.0)
+    assert pl.speed == 4.0, "speed not stored"
+    hits = []
+    pl.on_position = lambda t: hits.append(t)
+    pl.seek(0.0)
+    pl.seek(pl.total * 0.3)
+    assert len(hits) == 2, "on_position must fire on every seek"
+    seg_rapid = next(s for s in pl.segments if s.kind == "rapid")
+    seg_feed = next(s for s in pl.segments if s.kind == "feed")
+    assert _sim3.gcode_readout(seg_rapid).startswith("G0 X")
+    assert _sim3.gcode_readout(seg_feed).startswith("G1 X")
+    print(f"PLAYER OK: {n_all} segments, total={pl.total:.1f}s", flush=True)
 
     # auto-redraw (v0.3.13): the document observer redraws when the program
     # changes, and does nothing when it has already caught up

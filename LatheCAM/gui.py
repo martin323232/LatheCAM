@@ -643,6 +643,264 @@ class CmdSimulateChoose:
             pass
 
 
+# ------------------------------------------------------ simulation panel
+
+_SIM_PANEL = {}  # live dock + widgets (issue #8); empty when closed
+
+
+def _fill_op_list(lst, ops):
+    """Rebuild the checklist; op Label rides on UserRole for retrieval."""
+    from PySide import QtCore, QtWidgets
+    lst.clear()
+    for o in ops:
+        it = QtWidgets.QListWidgetItem(f"{o.Label}   ({getattr(o, 'OpType', '')})")
+        it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+        it.setCheckState(QtCore.Qt.Checked)
+        it.setData(QtCore.Qt.UserRole, o.Label)
+        lst.addItem(it)
+
+
+def _open_sim_panel(doc):
+    """Create or raise the simulation dock (issue #8): transport, speed,
+    scrubbable timeline and per-op checkboxes over a seekable SimPlayer."""
+    from PySide import QtCore, QtWidgets
+    ops = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "op"]
+    if not ops:
+        QtWidgets.QMessageBox.information(
+            None, "LatheCAM", "No LatheCAM operations in document.")
+        return None
+
+    existing = _SIM_PANEL.get("dock")
+    if existing is not None:
+        try:
+            existing.show()
+            existing.raise_()
+            if _SIM_PANEL.get("doc") is not doc:
+                _sim_panel_rebind(_SIM_PANEL, doc)
+            return existing
+        except RuntimeError:
+            _SIM_PANEL.clear()      # C++ side deleted (session teardown)
+
+    try:
+        player = sim.SimPlayer(doc)
+    except Exception as e:  # noqa: BLE001 - no setup/ops/tool
+        QtWidgets.QMessageBox.critical(None, "LatheCAM simulation failed", str(e))
+        return None
+
+    main = Gui.getMainWindow()
+    dock = QtWidgets.QDockWidget("LatheCAM \u2014 Simulation", main)
+    dock.setObjectName("LatheCAM_SimPanel")
+    dock.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+    body = QtWidgets.QWidget(dock)
+    dock.setWidget(body)
+    main.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+    v = QtWidgets.QVBoxLayout(body)
+    v.setContentsMargins(8, 8, 8, 8)
+    v.setSpacing(6)
+
+    v.addWidget(QtWidgets.QLabel("Operations:"))
+    lst = QtWidgets.QListWidget(body)
+    lst.setMaximumHeight(140)
+    _fill_op_list(lst, ops)
+    v.addWidget(lst)
+
+    row = QtWidgets.QHBoxLayout()
+    all_btn = QtWidgets.QPushButton("All")
+    none_btn = QtWidgets.QPushButton("None")
+    row.addWidget(all_btn)
+    row.addWidget(none_btn)
+    row.addStretch(1)
+    v.addLayout(row)
+
+    tl = QtWidgets.QHBoxLayout()
+    play_btn = QtWidgets.QPushButton("\u25b6 Play")
+    pause_btn = QtWidgets.QPushButton("\u2759\u2759 Pause")
+    stop_btn = QtWidgets.QPushButton("\u25a0 Stop")
+    speed = QtWidgets.QComboBox()
+    for txt, mult in (("0.25x", 0.25), ("0.5x", 0.5), ("1x", 1.0),
+                      ("2x", 2.0), ("4x", 4.0), ("8x", 8.0)):
+        speed.addItem(txt, mult)
+    speed.setCurrentIndex(2)
+    for b in (play_btn, pause_btn, stop_btn):
+        tl.addWidget(b)
+    tl.addStretch(1)
+    tl.addWidget(QtWidgets.QLabel("Speed"))
+    tl.addWidget(speed)
+    v.addLayout(tl)
+
+    slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, body)
+    slider.setRange(0, 1000)
+    slider.setToolTip("Scrub the timeline: drag to move the tool anywhere "
+                      "in the program")
+    v.addWidget(slider)
+
+    status = QtWidgets.QLabel("\u2014")
+    status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+    v.addWidget(status)
+
+    _SIM_PANEL.clear()
+    _SIM_PANEL.update({"dock": dock, "doc": doc, "list": lst,
+                       "slider": slider, "status": status, "speed": speed,
+                       "play": play_btn, "pause": pause_btn,
+                       "stop": stop_btn,
+                       "player": player, "syncing": False, "bulk": False})
+    player.update_material = True
+    player.ensure_marker()
+
+    def checked_labels():
+        out = []
+        for i in range(lst.count()):
+            it = lst.item(i)
+            if it.checkState() == QtCore.Qt.Checked:
+                out.append(str(it.data(QtCore.Qt.UserRole)))
+        return out
+
+    def update_status(t):
+        p = _SIM_PANEL.get("player")
+        if p is None or not p.segments:
+            status.setText("\u2014")
+            return
+        s, _f = p.segment_at(t)
+        if s is None:
+            status.setText("\u2014")
+            return
+        status.setText(
+            f"Op {s.op + 1}/{len(p.op_labels)} \u00b7 {s.label} \u00b7 "
+            f"move {s.move}/{s.n_moves} \u00b7 {sim.gcode_readout(s)}")
+        if not _SIM_PANEL["syncing"] and p.total > 0:
+            _SIM_PANEL["syncing"] = True
+            slider.setValue(int(round(t / p.total * 1000)))
+            _SIM_PANEL["syncing"] = False
+
+    player.on_position = update_status
+    _SIM_PANEL["update_status"] = update_status
+
+    def rebuild_timeline():
+        p = _SIM_PANEL.get("player")
+        if p is None:
+            return
+        labels = checked_labels()
+        if not labels:
+            p.pause()
+            _SIM_PANEL["syncing"] = True
+            slider.setValue(0)
+            _SIM_PANEL["syncing"] = False
+            status.setText("No operations selected.")
+            return
+        try:
+            p.set_ops(labels)
+            sim.simulate(_SIM_PANEL["doc"], only=labels)
+            p.seek(0.0)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.critical(
+                None, "LatheCAM simulation failed", str(e))
+
+    def on_item_changed(_item):
+        if not _SIM_PANEL.get("bulk"):
+            rebuild_timeline()
+    lst.itemChanged.connect(on_item_changed)
+
+    def set_all(state):
+        _SIM_PANEL["bulk"] = True
+        for i in range(lst.count()):
+            lst.item(i).setCheckState(
+                QtCore.Qt.Checked if state else QtCore.Qt.Unchecked)
+        _SIM_PANEL["bulk"] = False
+        rebuild_timeline()
+    all_btn.clicked.connect(lambda: set_all(True))
+    none_btn.clicked.connect(lambda: set_all(False))
+
+    def on_slider(value):
+        if _SIM_PANEL["syncing"]:
+            return
+        p = _SIM_PANEL.get("player")
+        if p is None or p.total <= 0:
+            return
+        p.pause()
+        try:
+            p.seek(value / 1000.0 * p.total)
+        except RuntimeError:
+            status.setText("Document closed.")
+    slider.valueChanged.connect(on_slider)
+
+    def do_play():
+        p = _SIM_PANEL.get("player")
+        if p is not None:
+            try:
+                p.play()
+            except RuntimeError:
+                status.setText("Document closed.")
+    play_btn.clicked.connect(do_play)
+    pause_btn.clicked.connect(lambda: _SIM_PANEL.get("player") and
+                              _SIM_PANEL["player"].pause())
+    stop_btn.clicked.connect(lambda: _SIM_PANEL.get("player") and
+                             _SIM_PANEL["player"].stop())
+
+    def on_speed(idx):
+        p = _SIM_PANEL.get("player")
+        if p is not None:
+            p.set_speed(speed.itemData(idx))
+    speed.currentIndexChanged.connect(on_speed)
+
+    def on_visibility(visible):
+        if not visible:
+            p = _SIM_PANEL.get("player")
+            if p is not None:
+                p.pause()
+    dock.visibilityChanged.connect(on_visibility)
+
+    try:
+        sim.simulate(doc)
+    except Exception as e:  # noqa: BLE001
+        QtWidgets.QMessageBox.critical(None, "LatheCAM simulation failed", str(e))
+    player.seek(0.0)
+    dock.show()
+    try:
+        Gui.SendMsgToActiveView("ViewFit")
+    except Exception:
+        pass
+    return dock
+
+
+def _sim_panel_rebind(panel, doc):
+    """Point an open panel at another document (issue #8)."""
+    ops = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "op"]
+    try:
+        player = sim.SimPlayer(doc)
+    except Exception:
+        return                      # new doc has no valid program: keep old
+    panel["player"].pause()
+    panel["player"] = player
+    panel["doc"] = doc
+    panel["bulk"] = True
+    _fill_op_list(panel["list"], ops)
+    panel["bulk"] = False
+    player.update_material = True
+    player.on_position = panel.get("update_status")
+    player.ensure_marker()
+    try:
+        sim.simulate(doc)
+    except Exception:
+        pass
+    player.seek(0.0)
+
+
+class CmdSimPanel:
+    def GetResources(self):
+        return {"MenuText": "Simulation panel\u2026",
+                "ToolTip": "Open the simulation dock: play/pause/stop, "
+                           "0.25x\u20138x speed, a scrubbable timeline and "
+                           "per-op checkboxes (the plain Simulate button "
+                           "stays the quick one-shot path)",
+                "Pixmap": ""}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        _open_sim_panel(Gui.ActiveDocument.Document)
+
+
 def make_op_command(op_type):
     # FreeCAD 1.1 calls methods on whatever object addCommand receives:
     # pass an INSTANCE, not a class (a class gives unbound functions ->

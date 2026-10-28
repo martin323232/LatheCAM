@@ -100,6 +100,14 @@ hand on feed hold.
 - **Simulate** — computes the finished part from the toolpath (OD cuts
   shrink the outer envelope, boring grows the bore — the result is the
   annulus between them) and animates the tool along the program.
+- **Simulation panel** — a dock with **play / pause / stop**, speed
+  0.25x–8x and a **scrubbable timeline**: drag the slider to move the tool
+  anywhere in the program, both directions. A per-op checklist picks which
+  ops participate (material and animation follow the checked set; material
+  updates at op boundaries), and a status line shows the current op, move
+  number and a G-code-ish readout (`G1 X20.000 Z-15.160 F.15`) of the
+  segment under the slider. The plain **Simulate** button stays the quick
+  one-shot path.
 
 Both are approximations for sanity-checking; the authoritative verification
 stays Masso's preview.
@@ -144,6 +152,20 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.25
+
+- **Simulation panel** (issue #8): a new **Simulation panel…** toolbar
+  command opens a dock with **play/pause/stop**, a **speed combo
+  (0.25x–8x)** and a **timeline slider you can scrub** — drag it and the
+  tool marker moves to that exact point, forwards or back. A **checkbox
+  per op** (all checked by default) picks which ops participate; the
+  material preview and the animation follow the checked set, with the
+  `Sim_part` refreshed at every op boundary while scrubbing. A status
+  line shows `Op 3/5 · label · move 14/120 · G1 X20.000 Z-15.160 F.15`
+  for the segment under the slider. Under the hood `sim.animate` was
+  refactored into a seekable `sim.SimPlayer` (pure position math +
+  QTimer transport), which the plain **Simulate** command now also uses.
 
 ### 0.3.24
 
