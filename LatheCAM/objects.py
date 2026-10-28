@@ -133,7 +133,7 @@ class OpProxy:
                         translate("Lathe", "Operation type")).OpType = op_type
         obj.addProperty("App::PropertyEnumeration", "ToolName", "Op",
                         translate("Lathe", "Tool name from library"))
-        _set_tool_enum(obj, TOOL_FOR_OP.get(op_type, "OD-rough"))
+        _set_tool_enum(obj, default_tool_for(op_type))
         obj.addProperty("App::PropertyString", "Comment", "Op",
                         translate("Lathe", "Comment")).Comment = ""
         obj.addProperty("App::PropertyInteger", "Order", "Op",
@@ -252,7 +252,7 @@ class OpProxy:
                 obj.removeProperty("ToolName")
                 obj.addProperty("App::PropertyEnumeration", "ToolName", "Op",
                                 translate("Lathe", "Tool name from library"))
-                _set_tool_enum(obj, cur or TOOL_FOR_OP.get(obj.OpType, "OD-rough"))
+                _set_tool_enum(obj, cur or default_tool_for(obj.OpType))
         except Exception:
             pass
 
@@ -277,6 +277,36 @@ TOOL_FOR_OP = {
     "part": "Part 2mm",
     "thread": "Thread 60deg",
 }
+
+# Fallback when the library has no tool with the placeholder name above.
+# A real machine table names its tools after the inserts in the turret, so
+# matching on kind beats pointing a new op at a tool that does not exist.
+KIND_FOR_OP = {
+    "face": "turn",
+    "od_rough": "turn",
+    "od_finish": "turn",
+    "id_rough": "bore",
+    "id_finish": "bore",
+    "groove": "groove",
+    "part": "part",
+    "thread": "thread",
+}
+
+
+def default_tool_for(op_type):
+    """Best tool name for a new op of ``op_type`` in the current library."""
+    name = TOOL_FOR_OP.get(op_type, "OD-rough")
+    try:
+        from .program import load_tools
+        lib = load_tools()
+    except Exception:
+        return name
+    if name in lib:
+        return name
+    kind = KIND_FOR_OP.get(op_type, "turn")
+    matches = sorted((t.tool_number, t.name) for t in lib.values()
+                     if t.kind == kind)
+    return matches[0][1] if matches else name
 
 
 def _tool_names(obj=None):
@@ -321,8 +351,9 @@ def create_op(doc, op_type, name=None):
     obj = doc.addObject("App::FeaturePython", name or f"Op_{op_type}")
     OpProxy(obj, op_type)
     obj.Label = f"Op: {op_type}"
-    # K5: per-type tool default
-    obj.ToolName = TOOL_FOR_OP.get(op_type, "OD-rough")
+    # K5: per-type tool default is set by OpProxy via the ToolName enumeration
+    # (assigning TOOL_FOR_OP here would bypass it and fail for names the
+    # enumeration dropped).
     # K3: new ops append to the program (max Order + 10), not Order=10
     orders = [int(o.Order) for o in doc.Objects
               if getattr(o, "LatheRole", "") == "op" and o.Name != obj.Name]
