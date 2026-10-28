@@ -88,13 +88,29 @@ check("op comments present", sum(1 for l in lines if l.startswith("(")) >= 6)
 
 # error path: missing tool name must raise
 bad = objects.create_op(doc, "od_rough")
-bad.ToolName = "nonexistent"
+objects._set_tool_enum(bad, "nonexistent")  # enum keeps unknown values
 try:
     post_document(doc)
     check("bad tool raises", False)
 except ValueError as e:
     check("bad tool raises", "nonexistent" in str(e))
 doc.removeObject(bad.Name)  # keep doc postable for the vis test below
+
+# ToolName dropdown: enumeration populated from the library
+chk = objects.create_op(doc, "face")
+check("ToolName is enumeration",
+      chk.getTypeIdOfProperty("ToolName") == "App::PropertyEnumeration")
+check("dropdown lists library tools",
+      "OD-finish" in chk.getEnumerationsOfProperty("ToolName"))
+# migration path: simulate an old string property and restore
+chk.removeProperty("ToolName")
+chk.addProperty("App::PropertyString", "ToolName", "Op")
+chk.ToolName = "OD-finish"
+chk.Proxy.onDocumentRestored(chk)
+check("string ToolName migrates to enum",
+      chk.getTypeIdOfProperty("ToolName") == "App::PropertyEnumeration"
+      and chk.ToolName == "OD-finish")
+doc.removeObject(chk.Name)
 
 # ProfileString parsing (od_finish stepped profile, R0.4 corner fillet:
 # chord 0.566 <= 2R so the arc validator accepts it)
@@ -230,12 +246,131 @@ check("K3: orders auto-increment", (a.Order, b.Order, c.Order) == (10, 20, 30),
       f"{(a.Order, b.Order, c.Order)}")
 check("K5: thread op gets thread tool", c.ToolName == "Thread 60deg", c.ToolName)
 check("K5: face op gets finish tool", a.ToolName == "OD-finish", a.ToolName)
+# a real machine table names tools after the inserts in the turret, so the
+# placeholder names are gone: the default must fall back by tool kind
+import json as _json
+import tempfile as _tf
+from LatheCAM import program as _prog
+_upath = os.path.join(_tf.mkdtemp(), "tools.json")
+_json.dump([
+    {"name": "CCMT060208", "tool_number": 1, "kind": "turn", "width": 3.0,
+     "nose_radius": 0.8, "max_depth": 20.0, "rpm": 2000.0, "feed": 0.05,
+     "thread_pitch": 0.0, "z_reference": "centre"},
+    {"name": "Thread 60", "tool_number": 3, "kind": "thread", "width": 3.0,
+     "nose_radius": 0.4, "max_depth": 20.0, "rpm": 200.0, "feed": 0.05,
+     "thread_pitch": 1.5, "z_reference": "centre"},
+    {"name": "CCGT boring", "tool_number": 8, "kind": "bore", "width": 3.5,
+     "nose_radius": 0.4, "max_depth": 25.0, "rpm": 2000.0, "feed": 0.025,
+     "thread_pitch": 0.0, "z_reference": "centre"},
+], open(_upath, "w"))
+_orig_ulp = _prog.user_tool_library_path
+_prog.user_tool_library_path = lambda: _upath
+try:
+    check("default tool falls back by kind (bore)",
+          objects.default_tool_for("id_finish") == "CCGT boring",
+          objects.default_tool_for("id_finish"))
+    check("default tool falls back by kind (turn)",
+          objects.default_tool_for("od_rough") == "CCMT060208",
+          objects.default_tool_for("od_rough"))
+    _bob = objects.create_op(_odoc, "id_finish")
+    check("new op lands on a real library tool", _bob.ToolName == "CCGT boring",
+          _bob.ToolName)
+    check("ToolName enum follows the machine table",
+          "CCGT boring" in _bob.getEnumerationsOfProperty("ToolName"),
+          str(_bob.getEnumerationsOfProperty("ToolName")))
+    _odoc.removeObject(_bob.Name)
+finally:
+    _prog.user_tool_library_path = _orig_ulp
 # new properties + K4 default
 _st = [o for o in _odoc.Objects if getattr(o, "LatheRole", "") == "setup"][0]
 check("K4: tool change default on", bool(_st.ToolChange))
 check("FaceDepth property exists", hasattr(a, "FaceDepth"))
 check("ThreadLeadIn property exists", hasattr(c, "ThreadLeadIn"))
 App_close(_odoc.Name)
+
+# Ball-seat regression: a cone/sphere face selection must become a profile-
+# following op. A cylinder-seeded id op silently bores a straight hole and
+# leaves the countersink and ball seat untouched.
+import Part
+from LatheCAM import profile_extract
+
+_bdoc = FreeCAD.newDocument("BallSeat")
+objects.create_setup(_bdoc)
+_outer = Part.makeCylinder(15.0, 25.0, FreeCAD.Vector(0, 0, -25.0))
+_bore = Part.makeCylinder(5.0, 25.0, FreeCAD.Vector(0, 0, -25.0))
+_funnel = Part.makeCone(5.0, 8.0, 5.196, FreeCAD.Vector(0, 0, -5.196))
+_seat = Part.makeSphere(6.0, FreeCAD.Vector(0, 0, -18.0))
+_solid = _outer.cut(_bore.fuse(_funnel).fuse(_seat))
+_feat = _bdoc.addObject("Part::Feature", "BallSeat_part")
+_feat.Shape = _solid
+_bdoc.recompute()
+_curved = [f"Face{i + 1}" for i, f in enumerate(_solid.Faces)
+           if f.Surface.TypeId in ("Part::GeomCone", "Part::GeomSphere")]
+_plain = [f"Face{i + 1}" for i, f in enumerate(_solid.Faces)
+          if f.Surface.TypeId == "Part::GeomCylinder"
+          and abs(f.Surface.Radius - 5.0) < 1e-6]
+check("test solid has cone/sphere faces", bool(_curved),
+      str([f.Surface.TypeId for f in _solid.Faces]))
+check("cylinder-only selection needs no profile",
+      not profile_extract.selection_needs_profile([(_feat, _plain)]),
+      str(_plain))
+check("cone/sphere selection needs a profile",
+      profile_extract.selection_needs_profile([(_feat, _curved)]), str(_curved))
+_bs = [o for o in _bdoc.Objects if getattr(o, "LatheRole", "") == "setup"][0]
+_ptxt = profile_extract.profile_text([(_feat, _curved + _plain)], _bs)
+check("ball-seat profile carries an arc",
+      any(len(p.split(",")) > 2 for p in _ptxt.split(";")), _ptxt)
+_op = objects.create_op(_bdoc, "id_finish")
+_op.ProfileString = _ptxt
+_op.ZEnd = profile_extract.profile_z_end(_ptxt)
+check("profile ZEnd from text", abs(float(_op.ZEnd) + 25.0) < 1e-6,
+      str(_op.ZEnd))
+_bt = _bs
+_bt.BoreDiameter = 3.0
+_bnc = post_document(_bdoc)
+check("ball seat posts an arc move", "G02" in _bnc or "G03" in _bnc,
+      "\n".join(_bnc.splitlines()[-14:]))
+check("ball seat arc keeps its radius", "R6." in _bnc or "R5." in _bnc)
+App_close(_bdoc.Name)
+
+# ------------------------------------------------- v0.3.21: SourceFace (issue #5)
+_sfdoc = FreeCAD.newDocument("SourceFaceTest")
+objects.create_setup(_sfdoc)
+_scyl = _sfdoc.addObject("Part::Cylinder", "Cyl")
+_scyl.Radius = 10.0
+_scyl.Height = 40.0
+_sop = objects.create_op(_sfdoc, "od_rough")
+check("op has SourceFace property", "SourceFace" in _sop.PropertiesList)
+check("empty SourceFace yields None", objects.source_faces(_sop) is None)
+_sop.SourceFace = (_scyl, ["Face3"])
+_src = objects.source_faces(_sop)
+check("SourceFace roundtrip",
+      _src is not None and _src[0].Name == "Cyl" and _src[1] == ["Face3"],
+      str(_src))
+_stmp = os.path.join(tempfile.gettempdir(), "lathecam_sourceface.FCStd")
+_sfdoc.saveAs(_stmp)
+App_close(_sfdoc.Name)  # saveAs renames the doc to the file stem: reopen
+_srd = FreeCAD.openDocument(_stmp)  # would collide with it while still open
+_sro = [o for o in _srd.Objects if getattr(o, "LatheRole", "") == "op"][0]
+_ssrc = objects.source_faces(_sro)
+check("SourceFace survives save/reopen",
+      _ssrc is not None and _ssrc[0].Name == "Cyl" and _ssrc[1] == ["Face3"],
+      str(_ssrc))
+App_close(_srd.Name)
+os.remove(_stmp)
+_sfdoc2 = FreeCAD.newDocument("SourceFaceGone")
+objects.create_setup(_sfdoc2)
+_c2 = _sfdoc2.addObject("Part::Cylinder", "Cyl2")
+_c2.Radius = 5.0
+_c2.Height = 10.0
+_o2 = _sfdoc2.addObject("App::FeaturePython", "OpGone")
+from LatheCAM.objects import OpProxy
+OpProxy(_o2, "od_finish")
+_o2.SourceFace = (_c2, ["Face3"])
+_sfdoc2.removeObject(_c2.Name)
+check("deleted source object degrades to None",
+      objects.source_faces(_o2) is None)
+App_close(_sfdoc2.Name)
 
 print(f"\n{len(FAILED)} failed" if FAILED else "\nHEADLESS TEST PASSED", flush=True)
 sys.exit(1 if FAILED else 0)

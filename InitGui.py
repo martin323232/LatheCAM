@@ -49,6 +49,9 @@ class LatheCAMWorkbench(Gui.Workbench):
         import FreeCAD as App
         if not gui.observer_armed():
             gui.arm_auto_observer(App)
+        # source-face highlight: click an op in the tree -> its faces light up
+        if not gui.face_observer_armed():
+            gui.arm_face_observer()
 
     def GetClassName(self):
         return "Gui::PythonWorkbench"

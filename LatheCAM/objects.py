@@ -161,6 +161,11 @@ class OpProxy:
                       "to the segment ENDING at that point: >0 G02 CW, "
                       "<0 G03 CCW, in mm"))
         obj.ProfileString = ""
+        obj.addProperty("App::PropertyLinkSub", "SourceFace", "Geometry",
+                        translate("Lathe", "the source object + FaceN this "
+                                  "op was created from (set automatically "
+                                  "from the face selection; clicking the op "
+                                  "in the tree lights these faces up)"))
         obj.addProperty("App::PropertyLength", "ChamferStart", "Geometry",
                         translate("Lathe", "od_finish: 45° chamfer (mm) at "
                                   "the face corner of the profile, 0 = off")
@@ -359,6 +364,30 @@ def create_op(doc, op_type, name=None):
               if getattr(o, "LatheRole", "") == "op" and o.Name != obj.Name]
     obj.Order = (max(orders) + 10) if orders else 10
     return obj
+
+
+def source_faces(op):
+    """(part_object, ['FaceN', ...]) the op was derived from, or None.
+
+    Degrades silently: a deleted source object or a renumbered/vanished face
+    (topological naming) simply yields None — the highlight is cosmetic and
+    must never raise.
+    """
+    try:
+        if getattr(op, "LatheRole", "") != "op":
+            return None
+        link = getattr(op, "SourceFace", None)
+        if not link:
+            return None
+        src, subs = link
+        if src is None or not hasattr(src, "Shape"):
+            return None
+        faces = [str(s).split(".")[-1] for s in (subs or ())]
+        faces = [f for f in faces if f.startswith("Face")
+                 and src.getSubObject(f) is not None]
+        return (src, faces) if faces else None
+    except Exception:
+        return None
 
 
 def collect_program(doc):

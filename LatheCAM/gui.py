@@ -117,7 +117,7 @@ class CmdOp:
 
     def Activated(self):
         doc = Gui.ActiveDocument.Document
-        picks = _selection_face_picks() if self.op_type in PROFILE_OPS else []
+        picks = _selection_face_picks()
         seed = None
         if self.op_type in ("od_rough", "od_finish", "id_rough", "id_finish"):
             seed = _selected_cyl_face(self.op_type)
@@ -129,7 +129,8 @@ class CmdOp:
         # A non-cylindrical selection must become a profile, or the op silently
         # machines a straight bore and leaves cones/ball seats untouched.
         prof = None
-        if picks and profile_extract.selection_needs_profile(picks):
+        if (picks and self.op_type in PROFILE_OPS
+                and profile_extract.selection_needs_profile(picks)):
             try:
                 prof = profile_extract.profile_text(picks, setup)
             except ValueError as e:
@@ -163,6 +164,14 @@ class CmdOp:
             if prof:
                 obj.ProfileString = prof
                 obj.ZEnd = profile_extract.profile_z_end(prof)
+            if picks:
+                # remember which geometry this op was derived from (issue #5);
+                # clicking the op in the tree lights these faces up
+                src_obj, src_faces = picks[0]
+                try:
+                    obj.SourceFace = (src_obj, src_faces)
+                except Exception:
+                    pass
         Gui.Selection.addSelection(obj)
 
 
@@ -309,6 +318,69 @@ def arm_auto_observer(app_module):
 def observer_armed():
     import builtins
     return bool(getattr(builtins, "_lathecam_autovis", False))
+
+
+class SourceFaceObserver:
+    """Lights up an op's source faces when the op is clicked in the tree.
+
+    Gui.Selection observer protocol: ``doc``/``obj`` arrive as name strings,
+    ``sub`` as a tuple of sub-names. The highlight is cosmetic and never
+    tracked state — the user's next click replaces the whole selection, so
+    there is nothing to clear up.
+    """
+
+    def __init__(self):
+        self._guard = False
+
+    def setSelection(self, doc, obj, sub):
+        if self._guard or not obj:
+            return
+        try:
+            op = FreeCAD.getDocument(doc).getObject(obj)
+            src = objects.source_faces(op) if op is not None else None
+            if not src:
+                return
+            part, faces = src
+            self._guard = True
+            try:
+                # addSelection takes the DocumentObject, not a name string
+                Gui.Selection.addSelection(part, faces)
+            finally:
+                self._guard = False
+        except Exception:
+            pass  # highlight is cosmetic; never break selection handling
+
+    def addSelection(self, doc, obj, sub, pnt=None):
+        pass
+
+    def rmSelection(self, doc, obj, sub, pnt=None):
+        pass
+
+    def clearSelection(self, doc):
+        pass
+
+
+def arm_face_observer():
+    """Register the source-face highlight observer once per FreeCAD session.
+
+    The highlight is cosmetic: if the selection API is unavailable (test
+    harness mocks, non-standard builds) the workbench still initializes.
+    """
+    import builtins
+    if getattr(builtins, "_lathecam_faceobs", None) is not None:
+        return None
+    obs = SourceFaceObserver()
+    try:
+        Gui.Selection.addObserver(obs)
+    except (AttributeError, RuntimeError):
+        return None
+    builtins._lathecam_faceobs = obs  # keep-alive: PySide does not own it
+    return obs
+
+
+def face_observer_armed():
+    import builtins
+    return getattr(builtins, "_lathecam_faceobs", None) is not None
 
 
 class CmdRegenerate:
@@ -498,6 +570,14 @@ class CmdProfileFromSel:
             target.ProfileString = text
             if hasattr(target, "ZEnd"):
                 target.ZEnd = zmin
+            if picks:
+                faces = [s for s in picks[0][1]
+                         if s.split(".")[-1].startswith("Face")]
+                if faces:
+                    try:
+                        target.SourceFace = (picks[0][0], faces)
+                    except Exception:
+                        pass
         doc.recompute()
         QtWidgets.QMessageBox.information(
             None, "LatheCAM profile",

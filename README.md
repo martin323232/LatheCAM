@@ -144,6 +144,17 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.21
+
+- **Ops remember their source face** (issue #5): an op created from a face
+  selection (or filled by **Profile from selection**) now stores a
+  `SourceFace` link (part object + `FaceN`) on the op. Click the op in the
+  tree and those faces light up in the 3D view — instantly see which
+  geometry an op was derived from. A selection observer added at workbench
+  start drives the highlight; deleted or renumbered source faces degrade
+  silently (no error, no highlight).
+- `package.json` version realigned with the release (had drifted at 0.3.17).
+
 ### 0.3.16
 
 - **Profile-from-selection hardening** (found by a 20-shape verification

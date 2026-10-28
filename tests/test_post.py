@@ -229,8 +229,8 @@ def test_b1_bore_entry():
         check(f"B1: {op_type} no feed above bore dia in (z_start, 0]",
               not bad, str(bad[:2]))
         cuts = [mo for mo in mv if mo.kind == "feed" and mo.x > 10.0 + 1e-9]
-        check(f"B1: {op_type} first cut exactly at z_start",
-              cuts and abs(cuts[0].z + 10.0) < 1e-9,
+        check(f"B1: {op_type} first cut at bore bottom (step-out, cut up)",
+              cuts and abs(cuts[0].z + 20.0) < 1e-9,
               str(cuts[0] if cuts else None))
 
 

@@ -83,6 +83,38 @@ def _run():
         print(f"HARNESS step: gcode ok ({len(txt.splitlines())} lines)",
               flush=True)
 
+        # 6) selecting a cone/sphere face must produce a profile-following
+        #    op, not a straight cylinder bore (the ball-seat regression)
+        import Part
+        from LatheCAM import program as _prog
+        bdoc = FreeCAD.newDocument("BallSeat")
+        outer = Part.makeCylinder(15.0, 25.0, FreeCAD.Vector(0, 0, -25.0))
+        bore = Part.makeCylinder(5.0, 25.0, FreeCAD.Vector(0, 0, -25.0))
+        funnel = Part.makeCone(5.0, 8.0, 5.196, FreeCAD.Vector(0, 0, -5.196))
+        seat = Part.makeSphere(6.0, FreeCAD.Vector(0, 0, -18.0))
+        solid = outer.cut(bore.fuse(funnel).fuse(seat))
+        feat = bdoc.addObject("Part::Feature", "BallSeat_part")
+        feat.Shape = solid
+        bdoc.recompute()
+        want = [f"Face{i + 1}" for i, fa in enumerate(solid.Faces)
+                if fa.Surface.TypeId in ("Part::GeomCone", "Part::GeomSphere")]
+        assert want, f"test solid has no cone/sphere face: " \
+                     f"{[fa.Surface.TypeId for fa in solid.Faces]}"
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(feat, want)
+        Gui.runCommand("CmdLatheOp_id_finish", 0)
+        nop = [o for o in bdoc.Objects if getattr(o, "LatheRole", "") == "op"]
+        assert len(nop) == 1, f"expected 1 op, got {len(nop)}"
+        prof = nop[0].ProfileString
+        assert prof, "cone/sphere selection left ProfileString empty"
+        assert any(len(p.split(",")) > 2 for p in prof.split(";")), \
+            f"profile has no arc: {prof}"
+        g2 = _prog.post_document(bdoc)
+        assert ("G02" in g2 or "G03" in g2), "no arc move in posted bore"
+        assert "R6" in g2 or "R5" in g2, f"no arc radius in gcode:\n{g2}"
+        print(f"HARNESS step: ball-seat profile ok ({prof})", flush=True)
+        FreeCAD.closeDocument(bdoc.Name)
+
         with open(RESULT, "a") as f:
             f.write("HARNESS PASS\n")
         print("HARNESS PASS", flush=True)

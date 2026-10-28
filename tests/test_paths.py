@@ -258,23 +258,39 @@ def test_review_round2():
     check("R4: width model clears rapid fully inside kerf",
           not check_collisions(mv, stock25, tool_width=3.0, z_reference="left"))
 
-    # R5: boring cuts toward the chuck (-Z), no diagonal feeds
+    # R5: boring discipline — no diagonal feeds, and no move through solid
+    # (cutting toward the face is legal: the material below is already cut)
     stock_b = Stock(diameter=30.0, length=40.0, bore_diameter=10.0)
     for op_type in ("id_rough", "id_finish"):
         mv = generate(Op(op_type, "Bore", "b", z_start=0.0, z_end=-20.0,
                          target_diameter=20.0, depth_per_pass=2.0,
                          stock_to_leave=0.3), tl["Bore"], stock_b)
-        prev, dz_pos, diag = None, [], []
+        prev, diag = None, []
         for mo in mv:
             if mo.kind == "feed" and prev is not None:
                 dz, dx = mo.z - prev[1], mo.x - prev[0]
-                if dz > 1e-9:
-                    dz_pos.append(mo)
                 if abs(dz) > 1e-9 and abs(dx) > 1e-9:
                     diag.append(mo)
             prev = (mo.x, mo.z)
-        check(f"R5: {op_type} cuts -Z only", not dz_pos, str(dz_pos[:2]))
+        probs = check_collisions(mv, stock_b, boring=True)
+        check(f"R5: {op_type} collision-free (boring)", not probs, str(probs[:2]))
         check(f"R5: {op_type} no diagonal feeds", not diag, str(diag[:2]))
+
+    # R5b: the drag rule catches a downward axial drag at an X the hole
+    # was never opened to (the classic face step-out + drag-below bug).
+    # A correct bottom step-out + cut-up cycle must stay clean.
+    good = [Motion("rapid", 7, 2), Motion("feed", 7, -25),
+            Motion("feed", 9, -25), Motion("feed", 9, 0),
+            Motion("rapid", 7, 0), Motion("rapid", 7, 2)]
+    probs = check_collisions(good, Stock(diameter=32.0, length=60.0,
+                                         bore_diameter=8.0), boring=True)
+    check("R5b: bottom step-out + cut-up clean", not probs, str(probs[:1]))
+    bad = [Motion("rapid", 7, 2), Motion("feed", 7, 0),
+           Motion("rapid", 9, 2), Motion("rapid", 9, 0),
+           Motion("feed", 9, -25)]
+    probs = check_collisions(bad, Stock(diameter=32.0, length=60.0,
+                                        bore_diameter=8.0), boring=True)
+    check("R5b: drag at unopened X caught", bool(probs), str(probs[:1]))
 
     # R6: groove/part programmed Z offset for the left (chuck-side) corner
     mv = generate(Op("groove", "Groove 3mm", "g", z_start=-25.0, z_end=-25.0,
@@ -347,8 +363,19 @@ def test_tool_library():
               "My groover" in merged
               and merged["My groover"].tool_number == 44)
         check("user lib: untouched built-ins remain", "OD-rough" in merged)
+        # user tool squatting a built-in T: user wins, placeholder dropped
         with open(upath, "w") as f:
-            json.dump([{"name": "Dup", "tool_number": 1, "kind": "turn"}], f)
+            json.dump([{"name": "Real Bore", "tool_number": 3, "kind": "bore",
+                        "width": 1.0, "nose_radius": 0.4, "max_depth": 20.0,
+                        "rpm": 1200.0, "feed": 0.1, "thread_pitch": 0.0,
+                        "z_reference": "centre"}], f)
+        merged2 = prog.load_tools()
+        check("user lib: user wins built-in T number",
+              "Real Bore" in merged2 and "Bore" not in merged2)
+        # two USER tools sharing a T# is still a hard error
+        with open(upath, "w") as f:
+            json.dump([{"name": "Dup", "tool_number": 1, "kind": "turn"},
+                       {"name": "Dup2", "tool_number": 1, "kind": "turn"}], f)
         try:
             prog.load_tools()
             check("user lib: duplicate T# raises", False, "no error raised")
