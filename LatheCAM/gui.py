@@ -338,8 +338,30 @@ def arm_auto_observer(app_module):
         return None
     obs = AutoVisObserver()
     app_module.addDocumentObserver(obs)
+    closer = SimPanelCloser()   # keeps the sim panel honest about closed docs
+    app_module.addDocumentObserver(closer)
     builtins._lathecam_autovis = True
     return obs
+
+
+class SimPanelCloser:
+    """Reset the simulation panel when its document is closed (issue #8).
+
+    Without this the dock keeps showing the closed file's checklist and
+    status, and reopening the panel against another document crashed
+    while restoring the dead document's tree state (ReferenceError).
+    """
+
+    def __init__(self):
+        _OBSERVERS.append(self)
+
+    def slotDeletedDocument(self, doc):
+        try:
+            name = doc.Name
+        except Exception:
+            return
+        if _SIM_PANEL.get("doc_name") == name:
+            _panel_doc_closed(_SIM_PANEL)
 
 
 def observer_armed():
@@ -655,6 +677,52 @@ class CmdSimulateChoose:
 _SIM_PANEL = {}  # live dock + widgets (issue #8); empty when closed
 
 
+def _doc_alive(doc):
+    """True if the wrapper still points at an open document (issue #8).
+
+    A closed document's Python wrapper raises ReferenceError on any
+    attribute access; the panel used to hold such a wrapper and crash
+    when reopened against another document.
+    """
+    if doc is None:
+        return False
+    try:
+        name = doc.Name
+    except Exception:
+        return False
+    return name in FreeCAD.listDocuments()
+
+
+def _panel_doc_closed(panel):
+    """The panel's document was closed: drop every stale reference.
+
+    The dock keeps its widgets but shows "Document closed."; reopening
+    the panel against another document rebinds cleanly (issue #8).
+    """
+    p = panel.get("player")
+    if p is not None:
+        try:
+            p.pause()
+        except Exception:
+            pass
+    panel["doc"] = None
+    panel["doc_name"] = None
+    panel["player"] = None
+    panel["vis_snapshot"] = None
+    lst = panel.get("list")
+    if lst is not None:
+        try:
+            lst.clear()
+        except Exception:
+            pass
+    st = panel.get("status")
+    if st is not None:
+        try:
+            st.setText("Document closed.")
+        except Exception:
+            pass
+
+
 def _fill_op_list(lst, ops):
     """Rebuild the checklist; op Label rides on UserRole for retrieval."""
     from PySide import QtCore, QtWidgets
@@ -701,7 +769,7 @@ def _panel_apply_paths(panel):
     snapshotted at open and is restored when the panel closes.
     """
     doc = panel.get("doc")
-    if doc is None:
+    if not _doc_alive(doc):
         return
     labels = set(_panel_checked_labels(panel))
     setup = objects.collect_program(doc)[0]
@@ -728,7 +796,7 @@ def _panel_apply_paths(panel):
 def _panel_snapshot_paths(panel):
     """Remember the tree's own toolpath visibility for restore-on-close."""
     doc = panel.get("doc")
-    if doc is None:
+    if not _doc_alive(doc):
         return
     setup = objects.collect_program(doc)[0]
     panel["vis_snapshot"] = vis._hidden_labels(doc, setup)
@@ -738,7 +806,7 @@ def _panel_restore_paths(panel):
     """Give the tree its visibility state back when the panel closes."""
     snap = panel.get("vis_snapshot")
     doc = panel.get("doc")
-    if snap is None or doc is None:
+    if snap is None or not _doc_alive(doc):
         return
     setup = objects.collect_program(doc)[0]
     if setup is not None and "HiddenVisPaths" in setup.PropertiesList:
@@ -844,7 +912,8 @@ def _open_sim_panel(doc):
     v.addWidget(status)
 
     _SIM_PANEL.clear()
-    _SIM_PANEL.update({"dock": dock, "doc": doc, "list": lst,
+    _SIM_PANEL.update({"dock": dock, "doc": doc, "doc_name": doc.Name,
+                       "list": lst,
                        "slider": slider, "status": status, "speed": speed,
                        "play": play_btn, "pause": pause_btn,
                        "stop": stop_btn,
@@ -975,9 +1044,15 @@ def _sim_panel_rebind(panel, doc):
     except Exception:
         return                      # new doc has no valid program: keep old
     _panel_restore_paths(panel)     # old doc gets its tree state back
-    panel["player"].pause()
+    old = panel.get("player")
+    if old is not None:
+        try:
+            old.pause()
+        except Exception:
+            pass                      # old doc closed: nothing to pause
     panel["player"] = player
     panel["doc"] = doc
+    panel["doc_name"] = doc.Name
     panel["bulk"] = True
     _fill_op_list(panel["list"], ops)
     panel["bulk"] = False

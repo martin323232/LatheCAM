@@ -226,6 +226,43 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         print(f"HARNESS step: sim panel ok "
               f"({len(pan['player'].segments)} segments)", flush=True)
 
+        # 8) closed document (issue #8 bug report "data comes from a
+        #    closed file"): closing the panel's document must clear the
+        #    panel, and reopening it against a NEW document must rebind.
+        #    The old code crashed here: _panel_restore_paths ran
+        #    collect_program on the dead wrapper (ReferenceError).
+        Gui.runCommand("CmdLatheSimPanel", 0)
+        Gui.updateGui()
+        assert pan["dock"].isVisible(), "panel did not reopen"
+        assert pan["doc"] is doc and pan["player"] is not None
+        FreeCAD.closeDocument(doc.Name)
+        Gui.updateGui()
+        assert pan["doc"] is None, "panel kept a closed document"
+        assert pan["player"] is None, "player survived document close"
+        assert pan["status"].text() == "Document closed.", \
+            f"status not reset: {pan['status'].text()!r}"
+        assert pan["list"].count() == 0, "checklist still shows closed ops"
+        doc2 = FreeCAD.newDocument("Second")
+        Gui.runCommand("CmdLatheSetup", 0)
+        Gui.runCommand("CmdLatheOp_face", 0)
+        s2 = next(o for o in doc2.Objects
+                  if getattr(o, "LatheRole", "") == "setup")
+        s2.BoreDiameter = 16.0
+        for o in doc2.Objects:
+            if getattr(o, "LatheRole", "") == "op" and o.OpType == "face":
+                o.FaceDiameter = 30.0
+        doc2.recompute()
+        Gui.runCommand("CmdLatheSimPanel", 0)
+        Gui.updateGui()
+        assert pan["doc"] is doc2, "panel did not rebind to the new document"
+        assert pan["player"] is not None and pan["player"].segments, \
+            "rebound player has no timeline"
+        assert pan["list"].count() == 1, \
+            f"checklist not rebuilt: {pan['list'].count()} items"
+        pan["dock"].close()
+        Gui.updateGui()
+        print("HARNESS step: closed-document rebind ok", flush=True)
+
         with open(result_path, "a") as f:
             f.write("HARNESS PASS\n")
         print("HARNESS PASS", flush=True)

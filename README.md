@@ -153,6 +153,33 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.28
+
+- **Sim panel survives a closed document** (issue #8 bug report): closing
+  the file the panel was simulating no longer leaves stale data on
+  screen and no longer crashes the next **Simulation panel…** click with
+  `ReferenceError: Cannot access attribute 'Objects' of deleted object`
+  (the panel tried to restore the closed document's tree state). A
+  document-close observer now resets the dock the moment its document
+  closes (checklist cleared, `Document closed.` in the status line), and
+  every path that touches the panel's document checks it is still open
+  before use. Reopening the panel against another document rebinds
+  cleanly.
+
+### 0.3.27
+
+- **Toolbar and workbench icons** (issue #11): 19 hand-drawn SVG icons in
+  FreeCAD's own visual grammar (Tango fills, green toolpath swoosh) ship
+  in `Resources/icons/`; every toolbar/menu command and the workbench
+  now have proper icons instead of the fallback placeholder.
+
+### 0.3.26
+
+- **Checklist drives toolpath display** (issue #8 follow-up): while the
+  simulation panel is open, unchecking an op hides its drawn toolpath
+  and checking it shows it again; closing the dock restores the tree's
+  own visibility state.
+
 ### 0.3.25
 
 - **Simulation panel** (issue #8): a new **Simulation panel…** toolbar
