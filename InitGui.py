@@ -43,6 +43,8 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheOpPanel", gui.CmdOpPanel())
         cmds.append("CmdLatheDeleteOp")
         Gui.addCommand("CmdLatheDeleteOp", gui.CmdDeleteOp())
+        cmds.append("CmdLatheSimClear")
+        Gui.addCommand("CmdLatheSimClear", gui.CmdSimClear())
         cmds.append("CmdLatheProfileSel")
         Gui.addCommand("CmdLatheProfileSel", gui.CmdProfileFromSel())
         cmds.append("CmdLathePost")

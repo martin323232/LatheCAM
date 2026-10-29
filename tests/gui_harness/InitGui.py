@@ -317,7 +317,16 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         cyl_faces = [f"Face{i + 1}" for i, fa in enumerate(cyl.Faces)
                      if fa.Surface.TypeId == "Part::GeomCylinder"]
         assert cyl_faces, "test cylinder has no cylindrical face"
-        _g16._op_panel_add_picks(feat, cyl_faces)
+        # real 3D clicks reach the observer with sub="" — the panel must
+        # pull the sub-names from the selection itself (live bug: the
+        # callback sub is empty for 3D picks, so the list stayed empty)
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(feat, [cyl_faces[0]])
+        _g16._op_panel_pick_names("OpPanel", feat.Name, "")
+        assert pan16["list"].count() == 1, \
+            "3D-style pick (sub='') did not reach the list"
+        Gui.Selection.clearSelection()
+        _g16._op_panel_add_picks(feat, cyl_faces[1:])
         assert pan16["list"].count() == len(cyl_faces), "picks not listed"
         pan16["apply"].click()
         Gui.updateGui()
@@ -350,6 +359,41 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         FreeCAD.closeDocument(odoc.Name)
         Gui.updateGui()
         print("HARNESS step: operation panel ok", flush=True)
+
+        # 10) Clear simulation: Sim_* objects vanish, ops and toolpaths stay
+        sdoc = FreeCAD.newDocument("SimClear")
+        scyl = Part.makeCylinder(15.0, 25.0, FreeCAD.Vector(0, 0, -25.0))
+        sfeat = sdoc.addObject("Part::Feature", "p")
+        sfeat.Shape = scyl
+        sdoc.recompute()
+        Gui.setActiveDocument("SimClear")
+        Gui.runCommand("CmdLatheSetup", 0)
+        Gui.runCommand("CmdLatheOp_od_finish", 0)
+        Gui.updateGui()
+        sgrp = sdoc.addObject("App::DocumentObjectGroup", "Sim_Simulation")
+        spart = sdoc.addObject("Part::Feature", "Sim_part")
+        spart.Shape = scyl
+        stl = sdoc.addObject("Part::Feature", "Sim_tool")
+        stl.Shape = Part.makeBox(1, 1, 1)
+        sgrp.Group = [spart, stl]
+        sdoc.recompute()
+        Gui.runCommand("CmdLatheVis", 0)
+        Gui.updateGui()
+        vis_names = {o.Name for o in sdoc.Objects
+                     if getattr(o, "LatheRole", "") == "vis"}
+        assert vis_names, "vis objects missing before clear"
+        Gui.runCommand("CmdLatheSimClear", 0)
+        Gui.updateGui()
+        left = [o.Name for o in sdoc.Objects if o.Name.startswith("Sim_")]
+        assert not left, f"Sim_* survived clear: {left}"
+        assert vis_names <= {o.Name for o in sdoc.Objects}, \
+            "clear deleted toolpath visuals"
+        ops_left = [o for o in sdoc.Objects
+                    if getattr(o, "LatheRole", "") == "op"]
+        assert ops_left, "clear deleted the operations"
+        FreeCAD.closeDocument(sdoc.Name)
+        Gui.updateGui()
+        print("HARNESS step: clear simulation ok", flush=True)
 
         with open(result_path, "a") as f:
             f.write("HARNESS PASS\n")

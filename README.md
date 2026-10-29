@@ -155,6 +155,17 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.32
+
+- **Operation panel picks now register** (issue #16 live report): 3D-view
+  clicks reach the selection observer with an empty sub-name, so nothing
+  landed in *Assigned geometry*. Pick mode now pulls the real sub-element
+  names from the selection itself (same source as Profile from
+  selection), so clicking faces/edges in the 3D view fills the list.
+- **Clear simulation** command: removes the simulation leftovers
+  (`Sim_Simulation`, `Sim_part`, `Sim_tool`) without touching operations
+  or toolpath drawings.
+
 ### 0.3.31
 
 - **Operation panel** (issue #16): clicking an op in the tree (or

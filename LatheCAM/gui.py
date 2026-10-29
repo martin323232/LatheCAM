@@ -1356,16 +1356,27 @@ def _delete_ops(doc, names):
 
 
 def _op_panel_pick_names(docname, objname, sub):
-    """Route a selection-callback pick into the panel while picking."""
+    """Route a selection-callback pick into the panel while picking.
+
+    The callback's ``sub`` is empty for 3D-view clicks (the framework only
+    passes sub-names for tree picks), so pull the real sub-element names
+    from the selection itself — same source 'Profile from selection' uses.
+    """
     if not _OP_PANEL.get("picking"):
         return
     try:
         obj = FreeCAD.getDocument(docname).getObject(objname)
     except Exception:
         return
-    subs = list(sub or ())
-    if subs:
-        _op_panel_add_picks(obj, subs)
+    if obj is None:
+        return
+    for s in Gui.Selection.getSelectionEx():
+        if s.Object is None or s.Object.Name != objname:
+            continue
+        subs = [x for x in (s.SubElementNames or [])
+                if x.split(".")[-1][:4] in ("Face", "Edge")]
+        if subs:
+            _op_panel_add_picks(obj, subs)
 
 
 def _op_panel_open_soon(op):
@@ -1563,6 +1574,42 @@ class CmdDeleteOp:
                 "Select the operation(s) to delete in the tree first.")
             return
         _delete_ops(doc, [o.Name for o in ops])
+
+
+class CmdSimClear:
+    """Remove the simulation leftovers (Sim_ group, part, tool)."""
+
+    def GetResources(self):
+        return {"MenuText": "Clear simulation",
+                "ToolTip": "Delete the simulation objects (Sim_Simulation, "
+                           "Sim_part, Sim_tool). The toolpath drawings and "
+                           "your operations are untouched",
+                "Pixmap": _icon("sim")}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        doc = Gui.ActiveDocument.Document
+        sims = [o for o in doc.Objects if o.Name.startswith("Sim_")]
+        if not sims:
+            return
+        with _transaction(doc, "Clear simulation"):
+            for o in list(doc.Objects):
+                if o.TypeId == "App::DocumentObjectGroup" \
+                        and o.Name.startswith("Sim_"):
+                    for m in list(o.Group):
+                        try:
+                            o.Group = [x for x in o.Group
+                                       if x.Name != m.Name]
+                        except Exception:
+                            pass
+            for o in sims:
+                if doc.getObject(o.Name) is not None:
+                    doc.removeObject(o.Name)
+        doc.recompute()
+        FreeCAD.Console.PrintStatus(
+            f"LatheCAM: removed {len(sims)} simulation object(s).\n")
 
 
 def make_op_command(op_type):
