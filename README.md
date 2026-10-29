@@ -155,6 +155,25 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.31
+
+- **Operation panel** (issue #16): clicking an op in the tree (or
+  `Operation panel…`) opens a dock showing its profile and the faces/edges
+  it was built from. **Pick edges/faces** enters 3D pick mode — every face
+  or edge clicked joins the list; unwanted entries are removed with
+  **Remove selected**; **Apply to op** writes `SourceFace` + `ProfileString`
+  back and recomputes. Ops created with a wrong or missing selection are
+  fixable after the fact instead of silently machining a straight cylinder.
+- **Profile-less warnings**: an op created with no face selection prints a
+  console warning, the panel shows an amber banner while a profile op has
+  no profile, and Post lists every profile-less op in its result dialog
+  instead of skipping it silently.
+- **Delete operation** (command + panel button): removes the op(s)
+  selected in the tree and their drawn toolpaths — never the part. The
+  Delete key deletes whatever is selected anywhere, so a picked face on
+  the body meant the whole body vanished plus a dependency dialog; this
+  command ignores the 3D selection entirely.
+
 ### 0.3.30
 
 - **Unchecking an op no longer floods errors** (issue #13 live report):

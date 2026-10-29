@@ -39,6 +39,10 @@ class LatheCAMWorkbench(Gui.Workbench):
             name = f"CmdLatheOp_{t}"
             Gui.addCommand(name, gui.make_op_command(t))
             cmds.append(name)
+        cmds.append("CmdLatheOpPanel")
+        Gui.addCommand("CmdLatheOpPanel", gui.CmdOpPanel())
+        cmds.append("CmdLatheDeleteOp")
+        Gui.addCommand("CmdLatheDeleteOp", gui.CmdDeleteOp())
         cmds.append("CmdLatheProfileSel")
         Gui.addCommand("CmdLatheProfileSel", gui.CmdProfileFromSel())
         cmds.append("CmdLathePost")
@@ -55,7 +59,8 @@ class LatheCAMWorkbench(Gui.Workbench):
         Gui.addCommand("CmdLatheSimPanel", gui.CmdSimPanel())
         cmds.append("CmdLatheAbout")
         Gui.addCommand("CmdLatheAbout", gui.CmdAbout())
-        self.appendToolbar("LatheCAM", cmds)
+        self.appendToolbar("LatheCAM", [c for c in cmds
+                                        if c != "CmdLatheDeleteOp"])
         self.appendMenu("LatheCAM", cmds)
         # keep the drawn toolpaths in step with op edits (App-level observer:
         # Gui.addDocumentObserver never calls Python hooks)

@@ -62,7 +62,8 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         #     Icon must point at a file that actually ships
         import LatheCAM.gui as _gi
         _icons = ["setup", "tools", "profile_sel", "post", "vis", "regen",
-                  "sim", "sim_choose", "sim_panel", "about", "workbench"]
+                  "sim", "sim_choose", "sim_panel", "about", "workbench",
+                  "op_panel", "delete_op"]
         _icons += ["op_" + t for t in OPS]
         _missing = [n for n in _icons if not os.path.exists(_gi._icon(n))]
         assert not _missing, f"icon files missing: {_missing}"
@@ -285,6 +286,70 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         pan["dock"].close()
         Gui.updateGui()
         print("HARNESS step: closed-document rebind ok", flush=True)
+
+        # 9) operation panel (issue #16): dock shows the op's profile and
+        #    assigned faces; pick mode collects Face/Edge clicks; Apply
+        #    writes SourceFace + ProfileString and clears the profile-less
+        #    warning; Delete operation removes op + toolpaths and NEVER the
+        #    part, even with a part face selected (the Delete-key trap).
+        from LatheCAM import gui as _g16
+        odoc = FreeCAD.newDocument("OpPanel")
+        cyl = Part.makeCylinder(15.0, 25.0, FreeCAD.Vector(0, 0, -25.0))
+        feat = odoc.addObject("Part::Feature", "p")
+        feat.Shape = cyl
+        odoc.recompute()
+        Gui.setActiveDocument("OpPanel")
+        Gui.runCommand("CmdLatheSetup", 0)
+        Gui.runCommand("CmdLatheOp_od_finish", 0)
+        Gui.updateGui()
+        o16 = [o for o in odoc.Objects
+               if getattr(o, "LatheRole", "") == "op"][0]
+        _g16._open_op_panel(o16)
+        Gui.updateGui()
+        pan16 = _g16._OP_PANEL
+        assert pan16.get("dock") is not None, "op panel did not open"
+        assert pan16["op_name"] == o16.Name, "panel shows wrong op"
+        assert pan16["warn"].isVisible(), \
+            "profile-less op showed no warning"
+        _mb9 = len(MSGBOXES)
+        _g16._op_panel_set_picking(True)
+        assert pan16["picking"], "pick mode did not engage"
+        cyl_faces = [f"Face{i + 1}" for i, fa in enumerate(cyl.Faces)
+                     if fa.Surface.TypeId == "Part::GeomCylinder"]
+        assert cyl_faces, "test cylinder has no cylindrical face"
+        _g16._op_panel_add_picks(feat, cyl_faces)
+        assert pan16["list"].count() == len(cyl_faces), "picks not listed"
+        pan16["apply"].click()
+        Gui.updateGui()
+        assert o16.ProfileString, "apply wrote no profile"
+        assert not pan16["warn"].isVisible(), "warning survived apply"
+        src16 = o16.SourceFace
+        assert src16 and src16[0] is feat, "SourceFace not stored"
+        # delete operation with a part face selected (the Delete-key trap):
+        # the op and its drawn paths vanish, the part survives
+        Gui.runCommand("CmdLatheVis", 0)
+        vis_before = [o.Name for o in odoc.Objects
+                      if getattr(o, "LatheRole", "") == "vis"
+                      and getattr(o, "LatheOp", "") == o16.Label]
+        assert vis_before, "no op toolpaths to clean"
+        o16_name = o16.Name
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(feat, [cyl_faces[0]])
+        Gui.Selection.addSelection(o16)
+        Gui.runCommand("CmdLatheDeleteOp", 0)
+        Gui.updateGui()
+        assert odoc.getObject(o16_name) is None, "op survived delete"
+        assert odoc.getObject(feat.Name) is not None, "delete ate the part!"
+        left16 = {o.Name for o in odoc.Objects
+                  if getattr(o, "LatheRole", "") == "vis"}
+        assert not left16 & set(vis_before), "op toolpaths survived delete"
+        assert pan16["op_name"] is None, "panel not reset after delete"
+        assert len(MSGBOXES) == _mb9, \
+            f"op panel raised error dialogs: {MSGBOXES[_mb9:]}"
+        pan16["dock"].close()
+        FreeCAD.closeDocument(odoc.Name)
+        Gui.updateGui()
+        print("HARNESS step: operation panel ok", flush=True)
 
         with open(result_path, "a") as f:
             f.write("HARNESS PASS\n")

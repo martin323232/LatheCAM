@@ -171,6 +171,13 @@ class CmdOp:
             if prof:
                 obj.ProfileString = prof
                 obj.ZEnd = profile_extract.profile_z_end(prof)
+            elif self.op_type in PROFILE_OPS and seed is None:
+                FreeCAD.Console.PrintWarning(
+                    f"LatheCAM: {obj.Label} was created without a face "
+                    "selection \u2014 it cuts a straight cylinder. Select the "
+                    "faces/edges on the part and use 'Profile from "
+                    "selection\u2026' or the Operation panel to give it the "
+                    "real form.\n")
             if picks:
                 # remember which geometry this op was derived from (issue #5);
                 # clicking the op in the tree lights these faces up
@@ -222,8 +229,18 @@ class CmdPost:
         try:
             gcode = program.post_document(doc, path)
             n = len(gcode.splitlines())
-            QtWidgets.QMessageBox.information(
-                None, "LatheCAM", f"Wrote {n} lines to\n{path}")
+            missing = [o.Label for o in doc.Objects
+                       if getattr(o, "LatheRole", "") == "op"
+                       and getattr(o, "OpType", "") in PROFILE_OPS
+                       and not str(getattr(o, "ProfileString", "") or "").strip()]
+            msg = f"Wrote {n} lines to\n{path}"
+            if missing:
+                extra = ("\u26a0 Ops without a profile cut straight "
+                         "cylinders \u2014 if that is wrong, assign faces/"
+                         "edges (Operation panel):\n  " + "\n  ".join(missing))
+                FreeCAD.Console.PrintWarning("LatheCAM: " + extra + "\n")
+                msg += "\n\n" + extra
+            QtWidgets.QMessageBox.information(None, "LatheCAM", msg)
         except Exception as e:  # noqa: BLE001 - show any post error
             QtWidgets.QMessageBox.critical(None, "LatheCAM post failed", str(e))
 
@@ -404,9 +421,25 @@ class SourceFaceObserver:
     # setSelection(doc, obj, sub). Handle both.
     def setSelection(self, doc, obj, sub):
         self._highlight(doc, obj)
+        if not self._guard:
+            self._track_op(doc, obj)
+            _op_panel_pick_names(doc, obj, sub)
 
     def addSelection(self, doc, obj, sub, pnt=None):
         self._highlight(doc, obj)
+        if not self._guard:
+            self._track_op(doc, obj)
+            _op_panel_pick_names(doc, obj, sub)
+
+    def _track_op(self, docname, objname):
+        """Op clicked in the tree -> the operation panel follows (issue #16)."""
+        try:
+            op = FreeCAD.getDocument(docname).getObject(objname)
+        except Exception:
+            return
+        if op is None or getattr(op, "LatheRole", "") != "op":
+            return
+        _op_panel_open_soon(op)
 
     def rmSelection(self, doc, obj, sub, pnt=None):
         pass
@@ -1083,6 +1116,453 @@ class CmdSimPanel:
 
     def Activated(self):
         _open_sim_panel(Gui.ActiveDocument.Document)
+
+
+# ------------------------------------------------------ operation panel
+
+_OP_PANEL = {}  # live dock + widgets (issue #16); empty when closed
+
+
+def _face_desc(obj, sub):
+    """'Face7 — sphere R6' style label for the assignment list."""
+    leaf = str(sub).split(".")[-1]
+    try:
+        f = obj.getSubObject(sub)
+    except Exception:
+        return leaf
+    if leaf.startswith("Edge"):
+        try:
+            kind = f.Curve.TypeId.split("::")[-1].replace("Geom", "").lower()
+            return f"{leaf} \u2014 {kind}"
+        except Exception:
+            return leaf
+    try:
+        s = f.Surface
+        t = getattr(s, "TypeId", "")
+        if t == "Part::GeomCylinder":
+            return f"{leaf} \u2014 \u00d8{2.0 * s.Radius:.4g} cylinder"
+        if t == "Part::GeomCone":
+            return f"{leaf} \u2014 cone"
+        if t == "Part::GeomSphere":
+            return f"{leaf} \u2014 sphere R{s.Radius:.4g}"
+        if t == "Part::GeomPlane":
+            return f"{leaf} \u2014 plane/shoulder"
+        return f"{leaf} \u2014 {t.split('::')[-1].lower()}"
+    except Exception:
+        return leaf
+
+
+def _op_panel_picks(panel):
+    """Sub-names currently listed in the assignment list."""
+    from PySide import QtCore
+    lst = panel.get("list")
+    out = []
+    if lst is None:
+        return out
+    for i in range(lst.count()):
+        out.append(str(lst.item(i).data(QtCore.Qt.UserRole)))
+    return out
+
+
+def _op_panel_set_picking(on):
+    """Toggle 3D pick mode: every face/edge clicked joins the list."""
+    panel = _OP_PANEL
+    if not panel:
+        return
+    panel["picking"] = bool(on)
+    btn = panel.get("pick")
+    if btn is not None:
+        btn.setText("\u2713 Done picking" if on else "Pick edges/faces")
+    st = panel.get("status")
+    if st is not None:
+        st.setText("Pick mode: click faces/edges in the 3D view \u2014 they "
+                   "are added to the list." if on else "\u2014")
+
+
+def _op_panel_show(panel, op):
+    """Rebind the panel's widgets to another op (ends any pick mode)."""
+    from PySide import QtCore, QtWidgets
+    _op_panel_set_picking(False)
+    panel["op_name"] = op.Name
+    panel["doc"] = op.Document
+    panel["doc_name"] = op.Document.Name
+    panel["src_obj"] = None
+    head = panel.get("head")
+    if head is not None:
+        head.setText(f"<b>{op.Label}</b> &nbsp;\u00b7&nbsp; type "
+                     f"<b>{getattr(op, 'OpType', '')}</b> &nbsp;\u00b7&nbsp; "
+                     f"tool {getattr(op, 'ToolName', '')}")
+    prof = str(getattr(op, "ProfileString", "") or "")
+    pre = panel.get("prof")
+    if pre is not None:
+        pre.setPlainText(prof if prof
+                         else "(no profile \u2014 straight cylinder cut)")
+    warn = panel.get("warn")
+    if warn is not None:
+        warn.setVisible(getattr(op, "OpType", "") in PROFILE_OPS and not prof)
+    lst = panel.get("list")
+    if lst is not None:
+        lst.clear()
+        src = objects.source_faces(op)
+        if src is not None:
+            part, faces = src
+            panel["src_obj"] = part
+            for f in faces:
+                it = QtWidgets.QListWidgetItem(_face_desc(part, f))
+                it.setData(QtCore.Qt.UserRole, f)
+                lst.addItem(it)
+    st = panel.get("status")
+    if st is not None:
+        st.setText("\u2014")
+
+
+def _op_panel_reset():
+    """The shown op vanished: blank the panel instead of pointing at a ghost."""
+    panel = _OP_PANEL
+    if not panel:
+        return
+    panel["op_name"] = None
+    panel["src_obj"] = None
+    _op_panel_set_picking(False)
+    for key in ("head", "warn", "status"):
+        w = panel.get(key)
+        if w is not None:
+            try:
+                w.setText("<i>Operation deleted</i>" if key == "head"
+                          else ("" if key == "warn" else "\u2014"))
+            except Exception:
+                pass
+    pre = panel.get("prof")
+    if pre is not None:
+        try:
+            pre.setPlainText("")
+        except Exception:
+            pass
+    lst = panel.get("list")
+    if lst is not None:
+        try:
+            lst.clear()
+        except Exception:
+            pass
+
+
+def _op_panel_add_picks(obj, subs):
+    """Pick-mode sink: add clicked Face*/Edge* sub-names to the list."""
+    panel = _OP_PANEL
+    if not panel or not panel.get("picking"):
+        return
+    from PySide import QtCore, QtWidgets
+    lst = panel.get("list")
+    if lst is None or obj is None:
+        return
+    have = set(_op_panel_picks(panel))
+    added = []
+    for sub in subs or ():
+        leaf = str(sub).split(".")[-1]
+        if not (leaf.startswith("Face") or leaf.startswith("Edge")):
+            continue
+        if (panel.get("src_obj") is not None
+                and panel["src_obj"].Name != obj.Name):
+            panel["status"].setText(
+                "All picks must come from the same part object.")
+            continue
+        if sub in have:
+            continue
+        it = QtWidgets.QListWidgetItem(_face_desc(obj, sub))
+        it.setData(QtCore.Qt.UserRole, sub)
+        lst.addItem(it)
+        added.append(sub)
+    if added:
+        panel["src_obj"] = obj
+        panel["status"].setText(
+            f"Added {len(added)} pick(s); click more or press Apply.")
+
+
+def _op_panel_apply():
+    """Write the list back onto the op: SourceFace + ProfileString."""
+    panel = _OP_PANEL
+    from PySide import QtWidgets
+    if not panel or panel.get("op_name") is None:
+        return
+    doc = panel.get("doc")
+    if not _doc_alive(doc):
+        QtWidgets.QMessageBox.warning(None, "LatheCAM", "Document closed.")
+        return
+    op = doc.getObject(panel["op_name"])
+    if op is None:
+        _op_panel_reset()
+        return
+    subs = _op_panel_picks(panel)
+    if not subs:
+        panel["status"].setText(
+            "Nothing assigned \u2014 use Pick edges/faces first.")
+        return
+    obj = panel.get("src_obj")
+    if obj is None:
+        panel["status"].setText("Pick mode lost its part object \u2014 "
+                                "pick again.")
+        return
+    setup = objects.collect_program(doc)[0]
+    try:
+        text = None
+        if getattr(op, "OpType", "") in PROFILE_OPS:
+            segs = profile_extract.segments(
+                profile_extract.lathe_shape(obj, setup), subs)
+            text = profile_extract.profile_from_segments(segs)
+        with _transaction(doc, "Operation panel apply"):
+            try:
+                op.SourceFace = (obj, subs)
+            except Exception:
+                pass
+            if text:
+                op.ProfileString = text
+                if hasattr(op, "ZEnd"):
+                    op.ZEnd = profile_extract.profile_z_end(text)
+        doc.recompute()
+    except ValueError as e:
+        QtWidgets.QMessageBox.critical(None, "LatheCAM profile", str(e))
+        return
+    _op_panel_set_picking(False)
+    _op_panel_show(panel, op)
+    FreeCAD.Console.PrintStatus(
+        f"LatheCAM: {op.Label} geometry updated from {len(subs)} pick(s).\n")
+
+
+def _delete_ops(doc, names):
+    """Remove ops + their drawn toolpaths; the part is never touched."""
+    labels = {doc.getObject(n).Label for n in names
+              if doc.getObject(n) is not None}
+    with _transaction(doc, "Delete operation"):
+        for o in list(doc.Objects):
+            if getattr(o, "LatheRole", "") == "vis" \
+                    and getattr(o, "LatheOp", "") in labels:
+                doc.removeObject(o.Name)
+        for o in list(doc.Objects):
+            if o.TypeId == "App::DocumentObjectGroup" \
+                    and o.Label in labels and o.Name.startswith("Vis_Op_"):
+                doc.removeObject(o.Name)
+        for n in names:
+            if doc.getObject(n) is not None:
+                doc.removeObject(n)
+    if _OP_PANEL.get("op_name") in names:
+        _op_panel_reset()
+    if _SIM_PANEL.get("doc") is doc and _SIM_PANEL.get("list") is not None:
+        _SIM_PANEL["bulk"] = True
+        _fill_op_list(_SIM_PANEL["list"],
+                      [o for o in doc.Objects
+                       if getattr(o, "LatheRole", "") == "op"])
+        _SIM_PANEL["bulk"] = False
+    refresh_if_changed(doc, force=True)
+
+
+def _op_panel_pick_names(docname, objname, sub):
+    """Route a selection-callback pick into the panel while picking."""
+    if not _OP_PANEL.get("picking"):
+        return
+    try:
+        obj = FreeCAD.getDocument(docname).getObject(objname)
+    except Exception:
+        return
+    subs = list(sub or ())
+    if subs:
+        _op_panel_add_picks(obj, subs)
+
+
+def _op_panel_open_soon(op):
+    """Raise/rebind the panel for op, deferred out of the selection callback."""
+    if _OP_PANEL.get("op_name") == op.Name and _OP_PANEL.get("dock") is not None:
+        return
+    if not getattr(FreeCAD, "GuiUp", False):
+        return
+    try:
+        from PySide import QtCore
+        QtCore.QTimer.singleShot(0, lambda: _open_op_panel(op))
+    except Exception:
+        pass
+
+
+def _open_op_panel(op):
+    """Create or raise the operation dock (issue #16).
+
+    Shows the op's profile and assigned faces/edges; Pick mode collects
+    3D clicks into the list; Apply writes SourceFace + ProfileString back
+    onto the op. Clicking an op in the tree opens it too, so geometry can
+    be fixed after the op was created with a wrong (or missing) selection.
+    """
+    from PySide import QtCore, QtWidgets
+    try:
+        op.Document.Name
+    except Exception:
+        return                       # document vanished (deferred open)
+    existing = _OP_PANEL.get("dock")
+    if existing is not None:
+        try:
+            existing.show()
+            existing.raise_()
+            _op_panel_show(_OP_PANEL, op)
+            return existing
+        except RuntimeError:
+            _OP_PANEL.clear()        # C++ side deleted (session teardown)
+
+    main = Gui.getMainWindow()
+    dock = QtWidgets.QDockWidget("LatheCAM \u2014 Operation", main)
+    dock.setObjectName("LatheCAM_OpPanel")
+    dock.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+    body = QtWidgets.QWidget(dock)
+    dock.setWidget(body)
+    main.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+    v = QtWidgets.QVBoxLayout(body)
+    v.setContentsMargins(8, 8, 8, 8)
+    v.setSpacing(6)
+
+    head = QtWidgets.QLabel("\u2014")
+    head.setTextFormat(QtCore.Qt.RichText)
+    v.addWidget(head)
+
+    warn = QtWidgets.QLabel(
+        "No profile: this op cuts a straight cylinder. Pick the real "
+        "faces/edges to make the tool follow the form.")
+    warn.setWordWrap(True)
+    warn.setStyleSheet("background:#fff3cd;color:#7a5b00;padding:4px 6px;"
+                       "border:1px solid #e0c96f;border-radius:3px;")
+    warn.hide()
+    v.addWidget(warn)
+
+    v.addWidget(QtWidgets.QLabel("Current profile:"))
+    prof = QtWidgets.QPlainTextEdit(body)
+    prof.setReadOnly(True)
+    prof.setMaximumHeight(56)
+    v.addWidget(prof)
+
+    v.addWidget(QtWidgets.QLabel("Assigned geometry:"))
+    lst = QtWidgets.QListWidget(body)
+    lst.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+    lst.setMaximumHeight(120)
+    v.addWidget(lst)
+
+    row = QtWidgets.QHBoxLayout()
+    pick_btn = QtWidgets.QPushButton("Pick edges/faces")
+    rm_btn = QtWidgets.QPushButton("Remove selected")
+    row.addWidget(pick_btn)
+    row.addWidget(rm_btn)
+    row.addStretch(1)
+    v.addLayout(row)
+
+    apply_btn = QtWidgets.QPushButton("Apply to op")
+    v.addWidget(apply_btn)
+
+    del_btn = QtWidgets.QPushButton("Delete operation")
+    del_btn.setStyleSheet("color:#b3261e;")
+    v.addWidget(del_btn)
+
+    status = QtWidgets.QLabel("\u2014")
+    status.setWordWrap(True)
+    status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+    v.addWidget(status)
+
+    _OP_PANEL.clear()
+    _OP_PANEL.update({"dock": dock, "doc": op.Document,
+                      "doc_name": op.Document.Name, "op_name": None,
+                      "head": head, "warn": warn, "prof": prof,
+                      "list": lst, "pick": pick_btn, "rm": rm_btn,
+                      "apply": apply_btn, "delete": del_btn,
+                      "status": status, "picking": False, "src_obj": None})
+
+    def on_pick():
+        _op_panel_set_picking(not _OP_PANEL.get("picking"))
+    pick_btn.clicked.connect(on_pick)
+
+    def on_remove():
+        panel = _OP_PANEL
+        lstw = panel.get("list")
+        if lstw is None:
+            return
+        for it in lstw.selectedItems():
+            lstw.takeItem(lstw.row(it))
+        panel["status"].setText("Removed; press Apply to store the change.")
+    rm_btn.clicked.connect(on_remove)
+
+    apply_btn.clicked.connect(_op_panel_apply)
+
+    def on_delete():
+        panel = _OP_PANEL
+        doc = panel.get("doc")
+        name = panel.get("op_name")
+        if not _doc_alive(doc) or not name or doc.getObject(name) is None:
+            return
+        _delete_ops(doc, [name])
+    del_btn.clicked.connect(on_delete)
+
+    def on_visibility(visible):
+        if not visible:
+            _op_panel_set_picking(False)
+    dock.visibilityChanged.connect(on_visibility)
+
+    _op_panel_show(_OP_PANEL, op)
+    dock.show()
+    return dock
+
+
+class CmdOpPanel:
+    def GetResources(self):
+        return {"MenuText": "Operation panel\u2026",
+                "ToolTip": "Open the operation dock: shows the op's profile "
+                           "and assigned faces/edges, lets you pick more "
+                           "geometry in the 3D view and apply it to the op "
+                           "(clicking an op in the tree opens it too)",
+                "Pixmap": _icon("op_panel")}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        doc = Gui.ActiveDocument.Document
+        ops = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "op"]
+        if not ops:
+            QtWidgets.QMessageBox.information(
+                None, "LatheCAM", "No LatheCAM operations in document.")
+            return
+        target = None
+        for s in Gui.Selection.getSelectionEx():
+            if s.Object is not None \
+                    and getattr(s.Object, "LatheRole", "") == "op":
+                target = s.Object
+                break
+        _open_op_panel(target or ops[0])
+
+
+class CmdDeleteOp:
+    """Safe op removal: ignores the 3D selection entirely (issue #16).
+
+    The Delete key deletes whatever is selected anywhere \u2014 a picked face
+    on the part means the whole body goes and every op's dependency dialog
+    pops. This command only ever removes the op(s) selected in the tree,
+    plus their drawn toolpaths.
+    """
+
+    def GetResources(self):
+        return {"MenuText": "Delete operation",
+                "ToolTip": "Remove the selected operation(s) and their "
+                           "toolpaths \u2014 never the part, whatever is "
+                           "selected in the 3D view",
+                "Pixmap": _icon("delete_op")}
+
+    def IsActive(self):
+        return Gui.ActiveDocument is not None
+
+    def Activated(self):
+        from PySide import QtWidgets
+        doc = Gui.ActiveDocument.Document
+        ops = [s.Object for s in Gui.Selection.getSelectionEx()
+               if s.Object is not None
+               and getattr(s.Object, "LatheRole", "") == "op"]
+        if not ops:
+            QtWidgets.QMessageBox.information(
+                None, "LatheCAM",
+                "Select the operation(s) to delete in the tree first.")
+            return
+        _delete_ops(doc, [o.Name for o in ops])
 
 
 def make_op_command(op_type):
