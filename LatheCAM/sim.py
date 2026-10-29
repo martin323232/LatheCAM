@@ -382,8 +382,8 @@ class SimPlayer:
         if obj is not None:
             try:
                 obj.Mesh = mesh
-            except RuntimeError:
-                self._mat_obj = None
+            except Exception:
+                self._mat_obj = None   # deleted under us (ReferenceError too)
 
     def _ensure_mat_obj(self):
         """Sim_part as a Mesh::Feature in continuous mode (replaces any
@@ -393,8 +393,8 @@ class SimPlayer:
             try:
                 self._mat_obj.Name
                 return self._mat_obj
-            except RuntimeError:
-                self._mat_obj = None
+            except Exception:
+                self._mat_obj = None   # FreeCAD raises ReferenceError, not RuntimeError
         old = doc.getObject(SIM_PREFIX + "part")
         if old:
             doc.removeObject(SIM_PREFIX + "part")
@@ -491,7 +491,7 @@ class SimPlayer:
             self.seek(self.t + self.step_ms / 1000.0 * self.speed)
             if self.t >= self.total - 1e-9:
                 self.pause()
-        except RuntimeError:
+        except Exception:
             self.pause()          # document or marker deleted under us
 
     # ---- tool marker --------------------------------------------------
@@ -502,7 +502,7 @@ class SimPlayer:
             try:
                 self._marker.Name          # touch: raises if C++ object gone
                 return self._marker
-            except RuntimeError:
+            except Exception:
                 self._marker = None
         doc = self.doc
         old = doc.getObject(SIM_PREFIX + "tool")
@@ -547,7 +547,7 @@ class SimPlayer:
                 self._boring = s.boring
             self._marker.Placement = self._vp.multiply(
                 App.Placement(Vector(x, 0.0, z), App.Rotation()))
-        except RuntimeError:
+        except Exception:
             self._marker = None   # deleted (plain Simulate ran, doc closed)
 
 

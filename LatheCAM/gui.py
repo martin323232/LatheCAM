@@ -962,7 +962,8 @@ def _open_sim_panel(doc):
             return
         try:
             p.set_ops(labels)
-            sim.simulate(_SIM_PANEL["doc"], only=labels)
+            if not p.continuous:
+                sim.simulate(_SIM_PANEL["doc"], only=labels)
             p.seek(0.0)
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(

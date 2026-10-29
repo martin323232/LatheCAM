@@ -155,6 +155,17 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.30
+
+- **Unchecking an op no longer floods errors** (issue #13 live report):
+  the checklist rebuild deleted the panel's live mesh, and every playback
+  tick then died with `Cannot access attribute 'Name' of deleted object`
+  — FreeCAD raises `ReferenceError`, which the narrow `RuntimeError`
+  guards did not catch. Dead-object guards now catch any exception, the
+  checklist no longer rebuilds `Sim_part` in continuous mode (the player
+  owns it), and the GUI harness fails if the panel raises any error
+  dialog during its whole step.
+
 ### 0.3.29
 
 - **Continuous material removal** (issue #13): the Simulation panel now

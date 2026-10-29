@@ -76,9 +76,11 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         QtWidgets.QFileDialog.getSaveFileName = staticmethod(
             lambda *a, **k: (nc_path, "G-code (*.nc)"))
         QtWidgets.QMessageBox.information = staticmethod(lambda *a, **k: None)
+        MSGBOXES = []
         QtWidgets.QMessageBox.critical = staticmethod(
-            lambda *a, **k: print("HARNESS MSGBOX:", a[2] if len(a) > 2 else a,
-                                  flush=True))
+            lambda *a, **k: (MSGBOXES.append(a[2] if len(a) > 2 else a),
+                             print("HARNESS MSGBOX:",
+                                   a[2] if len(a) > 2 else a, flush=True)))
 
         # 3) real document + every command through the real command stack
         doc = FreeCAD.newDocument("Harness")
@@ -167,6 +169,7 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         tree_hidden = [o for o in vis_feats if o.LatheOp == _hide_label]
         assert tree_hidden, f"op {_hide_label!r} drew no paths"
         tree_hidden[0].ViewObject.Visibility = False
+        _mb7 = len(MSGBOXES)          # dialogs during the sim-panel steps
         Gui.runCommand("CmdLatheSimPanel", 0)
         from LatheCAM import gui as _gui8
         pan = _gui8._SIM_PANEL
@@ -204,6 +207,13 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         pan["list"].item(0).setCheckState(_tc.Qt.Unchecked)
         assert first_label not in pan["player"].op_labels, \
             "unchecked op still in the timeline"
+        # uncheck must not disturb the live mesh or raise a dialog
+        # (issue #13 regression: deleted Sim_part raised ReferenceError
+        # from every playback tick — FreeCAD raises ReferenceError, not
+        # RuntimeError, so narrow guards miss it)
+        _mat2 = doc.getObject("Sim_part")
+        assert _mat2 is not None and _mat2.TypeId == "Mesh::Feature", \
+            f"uncheck broke the continuous mesh: {_mat2}"
         for _vf in vis_feats:
             if _vf.LatheOp == first_label:
                 assert not _vf.ViewObject.Visibility, \
@@ -221,6 +231,8 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         for _ in range(50):
             pan["player"]._tick()    # drive manually: _run blocks the loop
         assert pan["player"].t > 0, "ticks did not advance the position"
+        assert len(MSGBOXES) == _mb7, \
+            f"sim panel raised error dialogs: {MSGBOXES[_mb7:]}"
         pan["stop"].click()
         assert not pan["player"].playing(), "stop left the timer running"
         assert pan["player"].t == 0.0, "stop did not rewind"
