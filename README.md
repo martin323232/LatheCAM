@@ -103,11 +103,12 @@ hand on feed hold.
 - **Simulation panel** — a dock with **play / pause / stop**, speed
   0.25x–8x and a **scrubbable timeline**: drag the slider to move the tool
   anywhere in the program, both directions. A per-op checklist picks which
-  ops participate (material and animation follow the checked set; material
-  updates at op boundaries), and a status line shows the current op, move
-  number and a G-code-ish readout (`G1 X20.000 Z-15.160 F.15`) of the
-  segment under the slider. The plain **Simulate** button stays the quick
-  one-shot path.
+  ops participate (animation follows the checked set), and a status line
+  shows the current op, move number and a G-code-ish readout
+  (`G1 X20.000 Z-15.160 F.15`) of the segment under the slider. The shown
+  material is cut **continuously**: the stock mesh follows every cutting
+  move, so you watch material disappear along the path. The plain
+  **Simulate** button stays the quick one-shot path (finished part only).
 
 Both are approximations for sanity-checking; the authoritative verification
 stays Masso's preview.
@@ -117,8 +118,9 @@ stays Masso's preview.
 - Straight external threads only (no taper, no internal threading).
 - `od_finish` profile = polyline of (diameter, Z) points set via script or
   the `ProfileString` property (`"D,Z; D,Z; ..."`); no sketch-edge picking yet.
-- Simulation is tool-centerline based: no insert nose-radius or
-  insert-shape cutting, no cutter-compensation output.
+- Simulation is tool-centerline based for turn/bore tools: no insert
+  nose-radius cutting yet (groove/part/thread tools do model insert
+  width), no cutter-compensation output.
 
 ## Tests
 
@@ -152,6 +154,20 @@ writes `demo.nc`.
 | `v_pulley` | Ø52 × 24, pre-drilled Ø12 | **10 mm wide groove** (multi-centre, collision-free rapids), bore Ø19, part-off |
 
 ## Changelog
+
+### 0.3.29
+
+- **Continuous material removal** (issue #13): the Simulation panel now
+cuts the stock **as the tool moves**, not at op boundaries. A new
+headless `removal` core walks every cutting move, snapshots the
+axisymmetric envelope after each one, and the panel rebuilds the shown
+`Sim_part` mesh (direct revolve, no OCC per frame) from the snapshot
+under the playhead — scrub-safe in both directions. Groove, part-off and
+thread cuts now show the insert's real **width** (the old point envelope
+could only cut a slit); facing removes the whole facing allowance; profile
+arcs (G02/G03) cut too. Final volume matches the classic Simulate result
+(15161 vs 15159 mm³ on the test program). Real insert *shapes* (nose
+radius, 60° thread V, bore-bar size) arrive with issue #14.
 
 ### 0.3.28
 

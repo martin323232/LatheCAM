@@ -25,12 +25,10 @@ STYLE = {
 }
 
 
-def motions_for_document(doc):
-    """(stock, [(op_label, boring, [Motion])]) for the whole document.
-
-    boring=True marks ID-type ops (id_*, internal thread) so sim can grow
-    the bore instead of shrinking the outer envelope.
-    """
+def tool_motions_for_document(doc):
+    """(stock, [(op_label, boring, tool, [Motion])]) — like
+    motions_for_document but keeps the Tool object per op (the removal
+    sim needs width / z_reference / kind)."""
     setup, ops = collect_program(doc)
     if setup is None:
         raise ValueError("no Lathe::Setup object in document")
@@ -47,8 +45,19 @@ def motions_for_document(doc):
             raise ValueError(f"tool {op.tool!r} not in library")
         boring = (op.type.startswith("id_")
                   or (op.type == "thread" and getattr(op, "thread_inside", False)))
-        out.append((o.Label, boring, generate(op, tool, stock)))
+        out.append((o.Label, boring, tool, generate(op, tool, stock)))
     return stock, out
+
+
+def motions_for_document(doc):
+    """(stock, [(op_label, boring, [Motion])]) for the whole document.
+
+    boring=True marks ID-type ops (id_*, internal thread) so sim can grow
+    the bore instead of shrinking the outer envelope.
+    """
+    stock, full = tool_motions_for_document(doc)
+    return stock, [(label, boring, motions)
+                   for label, boring, _tool, motions in full]
 
 
 def view_placement(doc):

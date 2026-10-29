@@ -157,6 +157,36 @@ try:
     assert _sim3.gcode_readout(seg_feed).startswith("G1 X")
     print(f"PLAYER OK: {n_all} segments, total={pl.total:.1f}s", flush=True)
 
+    # continuous material (issue #13): snapshots per cutting move, the
+    # envelope profile follows the playhead anywhere in the program
+    pl2 = _sim3.SimPlayer(doc, duration=10.0)
+    pl2.enable_continuous()
+    assert pl2._rsim is not None, "continuous mode built no removal sim"
+    assert len(pl2._seg_cut) == len(pl2.segments), "segment map incomplete"
+    p0 = pl2.material_profile_at(0.0)
+    stock_r = None
+    setup_obj = [o for o in doc.Objects if getattr(o, "LatheRole", "") == "setup"][0]
+    stock_r = float(setup_obj.StockDiameter) / 2.0
+    assert all(abs(z[1] - stock_r) < 1e-9 for z in p0), \
+        "t=0 must show untouched stock"
+    p_end = pl2.material_profile_at(pl2.total)
+    v_start = pl2._rsim.env0.volume()
+    vols = [pl2._rsim.state_at(pl2._seg_cut[pl2.segments.index(
+        pl2.segment_at(pl2.total * k / 10.0)[0])],
+        1.0).volume() for k in range(11)]
+    assert all(vols[i] >= vols[i + 1] - 1e-6 for i in range(10)), \
+        f"material must only shrink: {vols}"
+    assert vols[-1] < vols[0], "program removed nothing"
+    v_sim = _sim.simulate(doc).Shape.Volume
+    assert abs(v_sim - vols[-1]) < 0.10 * v_sim, \
+        f"continuous final {vols[-1]:.0f} vs sim {v_sim:.0f} differ >10%"
+    mesh = _sim3.envelope_mesh(p_end)
+    assert mesh.CountFacets > 100, "mesh too thin"
+    mesh0 = _sim3.envelope_mesh(p0)
+    assert mesh0.CountPoints > 100, "stock mesh empty"
+    print(f"CONTINUOUS OK: {len(pl2._rsim.moves)} cut moves, "
+          f"{v_start:.0f} -> {vols[-1]:.0f} mm3 (sim {v_sim:.0f})", flush=True)
+
     # auto-redraw (v0.3.13): the document observer redraws when the program
     # changes, and does nothing when it has already caught up
     from LatheCAM import gui as _gui

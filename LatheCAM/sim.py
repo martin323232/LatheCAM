@@ -10,13 +10,21 @@ alone, but OD and ID cuts work opposite ways:
 The result is the annulus between the two profiles, revolved 360 deg into
 the solid "Sim_part" (solid, not a plug, when a bore exists). Optionally a
 tool marker is animated along the path (GUI only).
+
+With SimPlayer.continuous the material follows every cutting MOVE
+(issue #13): the removal.RemovalSim snapshots the envelope after each
+cut, and the shown mesh is rebuilt from the snapshot under the playhead
+— stock visibly disappears as the tool travels, not at op boundaries.
 """
+
+import time
 
 import FreeCAD as App
 import Part
 from FreeCAD import Vector
 
-from .vis import motions_for_document, view_placement
+from . import removal
+from .vis import motions_for_document, tool_motions_for_document, view_placement
 
 SIM_PREFIX = "Sim_"
 _ANIM = {}  # keeps timer + state alive between calls
@@ -95,6 +103,62 @@ def envelope_solid(profile):
     wire = Part.makePolygon(pts)
     face = Part.Face(wire)
     return face.revolve(Vector(0, 0, 0), Vector(0, 0, 1), 360)
+
+
+def _decimate_profile(profile, tol=0.02):
+    """Drop Z samples that keep both radii within tol of the last kept
+    point — flat runs collapse, real steps (grooves, shoulders) stay."""
+    out = [profile[0]]
+    for p in profile[1:]:
+        if abs(p[1] - out[-1][1]) > tol or abs(p[2] - out[-1][2]) > tol:
+            out.append(p)
+    if out[-1] is not profile[-1]:
+        out.append(profile[-1])
+    return out
+
+
+def envelope_mesh(profile, n_theta=48):
+    """Revolve a (z, r_outer, r_bore) profile into a Mesh directly — no OCC
+    revolve per frame (issue #13: this runs at playback speed).
+
+    Degenerate rings (r=0) produce zero-area triangles; harmless for
+    display and far cheaper than special-casing the caps."""
+    import numpy as np
+    import Mesh
+    prof = _decimate_profile(profile)
+    n = len(prof)
+    z = np.array([p[0] for p in prof], dtype=float)
+    ro = np.array([p[1] for p in prof], dtype=float)
+    rb = np.array([p[2] for p in prof], dtype=float)
+    th = np.linspace(0.0, 2.0 * np.pi, n_theta + 1)
+    ct, st = np.cos(th), np.sin(th)
+    m = n_theta + 1
+    pts = np.empty((2 * n * m, 3))
+    pts[:n * m, 0] = np.outer(ro, ct).ravel()
+    pts[:n * m, 1] = np.outer(ro, st).ravel()
+    pts[:n * m, 2] = np.repeat(z, m)
+    pts[n * m:, 0] = np.outer(rb, ct).ravel()
+    pts[n * m:, 1] = np.outer(rb, st).ravel()
+    pts[n * m:, 2] = np.repeat(z, m)
+    io = np.arange(n * m).reshape(n, m)
+    ib = io + n * m
+    parts = []
+    if n > 1:
+        a, b = io[:-1, :-1].ravel(), io[1:, :-1].ravel()
+        c, d = io[1:, 1:].ravel(), io[:-1, 1:].ravel()
+        parts += [a, b, c, a, c, d]                       # outer wall
+        a, b = ib[:-1, :-1].ravel(), ib[1:, :-1].ravel()
+        c, d = ib[1:, 1:].ravel(), ib[:-1, 1:].ravel()
+        parts += [a, c, b, a, d, c]                       # bore wall (inward)
+    of, bf = io[0], ib[0]
+    parts += [of[:-1], bf[:-1], of[1:], of[1:], bf[:-1], bf[1:]]   # front
+    ob, bb = io[-1], ib[-1]
+    parts += [ob[:-1], ob[1:], bb[:-1], ob[1:], bb[1:], bb[:-1]]   # back
+    cols = [np.stack([np.full(p.size, 3), p, q, r], axis=1)
+            for p, q, r in zip(parts[0::3], parts[1::3], parts[2::3])]
+    topo = np.concatenate(cols).ravel().astype(np.int64)
+    facets = pts.reshape(-1, 3)[topo.reshape(-1, 4)[:, 1:]].tolist()
+    return Mesh.Mesh(facets)
 
 
 def _select(per_op, only):
@@ -205,6 +269,7 @@ class SimPlayer:
         self.speed = 1.0
         self.t = 0.0
         self.update_material = False
+        self.continuous = False        # issue #13: material follows every move
         self.on_position = None      # fn(t)          after every seek
         self.on_op_change = None     # fn(op_index, label)
         self.segments = []
@@ -218,6 +283,12 @@ class SimPlayer:
         self._vp = view_placement(doc)
         self._boring = None
         self._op_index = None
+        self._rsim = None              # removal.RemovalSim (continuous mode)
+        self._seg_cut = []             # per segment: last cut index before/at it
+        self._seg_cutting = []         # per segment: True if it cuts itself
+        self._mat_obj = None           # Mesh::Feature Sim_part
+        self._mat_key = None
+        self._mat_time = 0.0
         self.set_ops(None)
 
     # ---- pure position state (headless-safe) ------------------------
@@ -254,6 +325,99 @@ class SimPlayer:
         self.total = acc
         self.t = 0.0
         self._op_index = None
+        self._last_only = only
+        if self.continuous:
+            self._build_rsim(only)
+
+    def enable_continuous(self):
+        """Turn on continuous material (issue #13) and snapshot the program
+        for the current op selection."""
+        self.continuous = True
+        self.set_ops(self._last_only)
+
+    def _build_rsim(self, only):
+        """Snapshot the whole program once (issue #13): every cutting move
+        gets an envelope snapshot, and each timeline segment learns which
+        cutting move belongs to it."""
+        stock, full = tool_motions_for_document(self.doc)
+        self._rsim = removal.RemovalSim(stock, full)
+        labels = [label for label, _b, _t, _m in full]
+        self._seg_cut = []
+        self._seg_cutting = []
+        for s in self.segments:
+            oi = labels.index(s.label)
+            self._seg_cut.append(self._rsim.cut_index(oi, s.move - 1))
+            self._seg_cutting.append(s.kind in removal.CUT_KINDS)
+
+    def material_profile_at(self, t):
+        """Pure (headless-testable): envelope profile at program time t."""
+        if self._rsim is None or not self.segments:
+            return None
+        s, f = self.segment_at(t)
+        i = self.segments.index(s)
+        ci = self._seg_cut[i]
+        env = self._rsim.state_at(ci, f if self._seg_cutting[i] else 1.0)
+        return env.profile()
+
+    def _update_material(self, t, force=False):
+        """Rebuild the shown Sim_part mesh for program time t, throttled
+        to ~12 fps so playback stays smooth (issue #13)."""
+        if self._rsim is None or not App.GuiUp:
+            return
+        s, f = self.segment_at(t)
+        i = self.segments.index(s)
+        ci = self._seg_cut[i]
+        cutting = self._seg_cutting[i]
+        key = (ci, int(f * 20) if cutting else -1)
+        now = time.monotonic()
+        if not force and key == self._mat_key:
+            return
+        if not force and now - self._mat_time < 0.08:
+            return
+        self._mat_key = key
+        self._mat_time = now
+        env = self._rsim.state_at(ci, f if cutting else 1.0)
+        mesh = envelope_mesh(env.profile())
+        obj = self._ensure_mat_obj()
+        if obj is not None:
+            try:
+                obj.Mesh = mesh
+            except RuntimeError:
+                self._mat_obj = None
+
+    def _ensure_mat_obj(self):
+        """Sim_part as a Mesh::Feature in continuous mode (replaces any
+        Part::Feature left by a plain Simulate run)."""
+        doc = self.doc
+        if self._mat_obj is not None:
+            try:
+                self._mat_obj.Name
+                return self._mat_obj
+            except RuntimeError:
+                self._mat_obj = None
+        old = doc.getObject(SIM_PREFIX + "part")
+        if old:
+            doc.removeObject(SIM_PREFIX + "part")
+        obj = doc.addObject("Mesh::Feature", SIM_PREFIX + "part")
+        obj.Label = "Simulated result"
+        obj.addProperty("App::PropertyString", "LatheRole",
+                        "Lathe").LatheRole = "sim"
+        obj.Placement = self._vp
+        vo = getattr(obj, "ViewObject", None)
+        if vo is not None:
+            try:
+                obj.ViewObject.ShapeColor = (0.20, 0.75, 0.35)
+                obj.ViewObject.Transparency = 30
+            except Exception:
+                pass
+        grp = doc.getObject(SIM_PREFIX + "Simulation")
+        if grp is None:
+            grp = doc.addObject("App::DocumentObjectGroup",
+                                SIM_PREFIX + "Simulation")
+            grp.Label = "Simulation"
+        grp.addObject(obj)
+        self._mat_obj = obj
+        return obj
 
     def segment_at(self, t):
         """(Segment, fraction) at program time t — no side effects."""
@@ -285,6 +449,8 @@ class SimPlayer:
                 simulate(self.doc, only=[s.label])
             if self.on_op_change is not None:
                 self.on_op_change(s.op, s.label)
+        if self.continuous:
+            self._update_material(self.t)
         if self.on_position is not None:
             self.on_position(self.t)
 

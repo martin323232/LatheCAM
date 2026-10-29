@@ -919,7 +919,7 @@ def _open_sim_panel(doc):
                        "stop": stop_btn,
                        "player": player, "syncing": False, "bulk": False,
                        "vis_snapshot": None})
-    player.update_material = True
+    player.enable_continuous()          # issue #13: material follows every move
     player.ensure_marker()
     _panel_snapshot_paths(_SIM_PANEL)   # tree state to restore on close
     _panel_apply_paths(_SIM_PANEL)      # all checked: show every drawn path
@@ -1058,7 +1058,7 @@ def _sim_panel_rebind(panel, doc):
     panel["bulk"] = False
     _panel_snapshot_paths(panel)    # new doc: remember its tree state
     _panel_apply_paths(panel)       # checklist drives the new doc's display
-    player.update_material = True
+    player.enable_continuous()      # issue #13
     player.on_position = panel.get("update_status")
     player.ensure_marker()
     try:

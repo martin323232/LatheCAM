@@ -179,6 +179,17 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         assert pan["player"].t > 0, "slider scrub did not move the player"
         assert "Op" in pan["status"].text(), \
             f"status line empty: {pan['status'].text()!r}"
+        # continuous material (issue #13): the panel drives a live mesh
+        # that follows the playhead, not an op-boundary Part::Feature
+        assert pan["player"].continuous, "panel did not enable continuous"
+        _mat = doc.getObject("Sim_part")
+        assert _mat is not None and _mat.TypeId == "Mesh::Feature", \
+            f"continuous Sim_part missing/wrong: {_mat}"
+        assert _mat.Mesh.CountFacets > 100, "continuous mesh empty"
+        _v0 = pan["player"]._rsim.state_at(-1).volume()
+        _v1 = pan["player"]._rsim.state_at(
+            len(pan["player"]._rsim.moves) - 1).volume()
+        assert _v1 < _v0, "continuous sim removed nothing"
         pan["slider"].setValue(0)
         assert pan["player"].t == 0.0, "scrub back to start failed"
         pan["speed"].setCurrentIndex(5)          # 8x
