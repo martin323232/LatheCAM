@@ -1195,8 +1195,12 @@ def _op_panel_show(panel, op):
     prof = str(getattr(op, "ProfileString", "") or "")
     pre = panel.get("prof")
     if pre is not None:
-        pre.setPlainText(prof if prof
-                         else "(no profile \u2014 straight cylinder cut)")
+        if getattr(op, "OpType", "") == "part":
+            pre.setPlainText("(part-off: cuts at the bore diameter \u2014 "
+                             "no profile needed)")
+        else:
+            pre.setPlainText(prof if prof
+                             else "(no profile \u2014 straight cylinder cut)")
     warn = panel.get("warn")
     if warn is not None:
         warn.setVisible(getattr(op, "OpType", "") in PROFILE_OPS and not prof)
@@ -1319,6 +1323,23 @@ def _op_panel_apply():
                 if hasattr(op, "ZEnd"):
                     op.ZEnd = profile_extract.profile_z_end(text)
         doc.recompute()
+        # the user just edited this op \u2014 make sure its result is visible:
+        # un-hide its toolpaths (the sim checklist may have hidden them)
+        setup2 = objects.collect_program(doc)[0]
+        if setup2 is not None and "HiddenVisPaths" in setup2.PropertiesList:
+            hidden = [str(x) for x in (setup2.HiddenVisPaths or [])]
+            kept = [x for x in hidden if not x.startswith(op.Label + " \u00b7 ")]
+            if len(kept) != len(hidden):
+                setup2.HiddenVisPaths = sorted(kept)
+        for v in doc.Objects:
+            if getattr(v, "LatheRole", "") == "vis" \
+                    and getattr(v, "LatheOp", "") == op.Label:
+                vo = getattr(v, "ViewObject", None)
+                if vo is not None:
+                    try:
+                        vo.Visibility = True
+                    except Exception:
+                        pass
     except ValueError as e:
         QtWidgets.QMessageBox.critical(None, "LatheCAM profile", str(e))
         return

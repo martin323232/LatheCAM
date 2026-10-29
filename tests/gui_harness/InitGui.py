@@ -332,6 +332,26 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         Gui.updateGui()
         assert o16.ProfileString, "apply wrote no profile"
         assert not pan16["warn"].isVisible(), "warning survived apply"
+        # apply must also un-hide the op's toolpaths (sim checklist may
+        # have hidden them \u2014 live report: "why is no toolpath shown")
+        _st16 = [o for o in odoc.Objects
+                 if getattr(o, "LatheRole", "") == "setup"][0]
+        _hv = [o for o in odoc.Objects
+               if getattr(o, "LatheRole", "") == "vis"
+               and getattr(o, "LatheOp", "") == o16.Label]
+        assert _hv, "op has no vis features to test"
+        for _v in _hv:
+            _v.ViewObject.Visibility = False
+        _st16.HiddenVisPaths = sorted(
+            set(str(x) for x in (_st16.HiddenVisPaths or []))
+            | {v.Label for v in _hv})
+        pan16["apply"].click()
+        Gui.updateGui()
+        assert all(v.ViewObject.Visibility for v in _hv), \
+            "apply left the op's toolpaths hidden"
+        assert not (set(str(x) for x in (_st16.HiddenVisPaths or []))
+                    & {v.Label for v in _hv}), \
+            "apply left the op's paths in HiddenVisPaths"
         src16 = o16.SourceFace
         assert src16 and src16[0] is feat, "SourceFace not stored"
         # delete operation with a part face selected (the Delete-key trap):

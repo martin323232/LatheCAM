@@ -155,6 +155,16 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.33
+
+- **Apply to op now shows the result** (live report): the simulation
+  panel's checklist can leave toolpaths hidden (`Setup.HiddenVisPaths`),
+  so an applied op looked like it did nothing. Apply clears the op's
+  entries from the hidden list and turns its toolpath drawings visible.
+- **Part-off ops explain themselves**: the panel notes that part-off
+  cuts at the bore diameter and needs no profile, instead of showing
+  the generic "no profile" text.
+
 ### 0.3.32
 
 - **Operation panel picks now register** (issue #16 live report): 3D-view
