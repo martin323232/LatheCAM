@@ -155,6 +155,36 @@ writes `demo.nc`.
 
 ## Changelog
 
+### 0.3.35
+
+- **Tool selector in the operation panel** (issue #17): the read-only
+  `tool` text is replaced by a combo listing every tool from the
+  built-in + user library. Tools matching the op type sort first, the
+  rest are dimmed but selectable. A geometry readout (kerf width,
+  nose R, z-reference / bar Ø / thread pitch) updates with the
+  choice, and picking a tool writes `ToolName` immediately — Apply
+  regenerates the path, so a part-off kerf offset follows the new
+  tool. A broken user library (duplicate T#) now degrades to the
+  built-in tools with a panel warning instead of an error dialog.
+
+### 0.3.34
+
+- **Tool profile editor** (issue #14): the Tool Library gains a
+  "Profile…" button opening a real insert-profile dialog — ISO 1832
+  quick-fill (type `CCMT060208`, get shape/relief/IC/thickness/nose-R,
+  letter codes like `E3` round-trip exactly), shape gallery (C D V A W T
+  S B R K E X), dimension selects, lead-angle slider and a live preview
+  (top view for OD, hole cross-section for boring bars).
+- **New `inserts` module**: ISO 1832 parsing + insert polygon geometry
+  (pure stdlib, plain-python tested in `tests/test_inserts.py`).
+- **Computed tool geometry**: `Tool` carries the insert fields and
+  derives outer radius (insert envelope beyond the nose), approach
+  angle and — for boring bars — the minimum bore Ø it fits into.
+- **Boring safety warnings** (issue #14): a boring tool whose bar +
+  insert envelope cannot fit the current bore now warns in the sim
+  console and posts a `; WARNING:` comment line in the G-code (also
+  shown in the Post dialog) instead of silently crashing the bar.
+
 ### 0.3.33
 
 - **Apply to op now shows the result** (live report): the simulation

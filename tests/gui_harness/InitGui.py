@@ -352,6 +352,41 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         assert not (set(str(x) for x in (_st16.HiddenVisPaths or []))
                     & {v.Label for v in _hv}), \
             "apply left the op's paths in HiddenVisPaths"
+        # --- tool selector (issue #17): change tool on a part op ---
+        Gui.runCommand("CmdLatheOp_part", 0)
+        Gui.updateGui()
+        p17 = [o for o in odoc.Objects
+               if getattr(o, "LatheRole", "") == "op"
+               and getattr(o, "OpType", "") == "part"][0]
+        _g16._open_op_panel(p17)
+        Gui.updateGui()
+        sel17 = pan16["tool"]
+        assert sel17.count() >= 2, "tool combo empty"
+        from LatheCAM.program import load_tools as _lt17, build_blocks as _bb17
+        from PySide import QtCore as _qc17
+        lib17 = _lt17()
+        names17 = [sel17.itemData(i, _qc17.Qt.UserRole)
+                   for i in range(sel17.count())]
+        assert str(p17.ToolName) in names17, "current tool missing from combo"
+        # first entries must be the op-type match (part tools sort first)
+        assert lib17[names17[0]].kind == "part", "combo not sorted by op type"
+        alt17 = sorted((t for t in lib17.values()
+                        if t.name != str(p17.ToolName) and t.width > 0),
+                       key=lambda t: -t.width)[0]
+        sel17.setCurrentIndex(names17.index(alt17.name))
+        Gui.updateGui()
+        assert str(p17.ToolName) == alt17.name, "tool change not written to op"
+        # the parting Z must follow the new tool's kerf offset
+        _blk17 = _bb17(_st16, [p17], lib17)
+        _feed17 = [m for m in _blk17[0].moves if m.kind == "feed"]
+        _off17 = {"left": -alt17.width / 2.0,
+                  "right": alt17.width / 2.0}.get(alt17.z_reference, 0.0)
+        assert _feed17, "part op produced no feed moves"
+        assert abs(_feed17[0].z - (float(p17.ZStart) + _off17)) < 1e-6, \
+            "parting Z ignores the new tool's kerf offset"
+        assert pan16["tool_geo"].text(), "geometry readout empty after change"
+        _g16._open_op_panel(o16)   # back to the op the delete test uses
+        Gui.updateGui()
         src16 = o16.SourceFace
         assert src16 and src16[0] is feat, "SourceFace not stored"
         # delete operation with a part face selected (the Delete-key trap):
@@ -414,6 +449,40 @@ def _run(result_path="/tmp/lathe_harness_result.txt"):
         FreeCAD.closeDocument(sdoc.Name)
         Gui.updateGui()
         print("HARNESS step: clear simulation ok", flush=True)
+
+        # 11) Tool Profile editor (issue #14): build the dialog against
+        #     real Qt, parse ISO codes through its public API, verify the
+        #     computed fields, the letter-code round-trip (E3 must stay
+        #     E3) and the boring fit warning. No modal exec_ — the harness
+        #     drives the logic directly.
+        from LatheCAM.gui import ProfileEditorDialog
+        from LatheCAM.model import Tool as _T14
+        from LatheCAM import inserts as _ins14
+        _t14 = _T14("Harness bore", 99, "bore", nose_radius=0.4)
+        _d14 = ProfileEditorDialog(_t14)
+        assert _d14.parse_iso("TCMT16E304"), "dialog parse_iso failed"
+        assert _d14.iso_edit.text() == "TCMT16E304", \
+            f"code not shown: {_d14.iso_edit.text()!r}"
+        assert not _d14.parse_iso("garbage"), "dialog accepted junk"
+        assert _d14.iso_edit.text() == "TCMT16E304", "junk clobbered code"
+        _f14 = _d14.fields()
+        assert abs(_f14["insert_ic"] - 15.88) < 1e-9, _f14
+        assert abs(_f14["insert_thickness"] - 3.18) < 1e-9, _f14
+        assert _f14["outer_radius"] > 15.0, _f14
+        assert abs(_f14["approach_angle"] - 60.0) < 1e-9, _f14
+        # boring fit: bar Ø10 + insert envelope must not fit a Ø12 bore
+        _d14.bar_edit.setText("10")
+        _d14.bore_edit.setText("12")
+        _f14 = _d14.fields()
+        assert _f14["min_bore_d"] > 12.0, _f14
+        _t14.apply_iso("TCMT16E304")
+        _t14.bar_diameter = 10.0
+        _t14.compute_geometry()
+        _w14 = _ins14.bore_fit_warning(_t14, 12.0)
+        assert _w14 and "12" in _w14, f"no bore warning: {_w14}"
+        assert _ins14.bore_fit_warning(_t14, 60.0) is None
+        _d14.deleteLater()
+        print("HARNESS step: tool profile editor ok", flush=True)
 
         with open(result_path, "a") as f:
             f.write("HARNESS PASS\n")

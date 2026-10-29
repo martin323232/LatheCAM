@@ -210,9 +210,13 @@ class Block:
         self.moves = moves
 
 
-def post_program(blocks: List[Block], header: str = "", **kw) -> str:
+def post_program(blocks: List[Block], header: str = "", warnings=None,
+                 **kw) -> str:
     body = MassoPost(**kw).post(blocks)
     lines = []
     if header:
         lines += [f"; {h}" for h in header.splitlines()]
+    # issue #14: post-time validation warnings surface as comment lines
+    for w in warnings or ():
+        lines.append(f"; WARNING: {w}")
     return "\n".join(lines) + ("\n" if lines else "") + body

@@ -54,6 +54,58 @@ class Tool:
     spindle_dir: str = "cw"
     # free-text note shown in the Tool Library dialog (e.g. "VERIFY")
     note: str = ""
+    # --- insert geometry (issue #14, all optional: 0.0/"" = unset, so old
+    # tools.json files load unchanged). Fill with apply_iso() from an
+    # ISO 1832 code or edit per-field in the Tool Profile editor.
+    iso_code: str = ""          # e.g. CCMT060208 (canonical spelling)
+    insert_shape: str = ""      # C D V A W T S B R K E X (top-view polygon)
+    insert_ic: float = 0.0      # inscribed circle Ø, mm
+    insert_thickness: float = 0.0
+    outer_radius: float = 0.0   # computed: insert envelope sweep radius
+                                # beyond the nose, incl. nose_radius (mm)
+    lead_angle: float = 0.0     # side cutting edge angle λ_s, deg
+    approach_angle: float = 0.0  # computed: approach angle κ_r, deg
+    relief_angle: float = 0.0   # clearance from the ISO letter, deg
+    # boring bar (kind == "bore")
+    bar_diameter: float = 0.0   # bar Ø, mm
+    bar_overhang: float = 0.0   # stick-out from the turret, mm
+    min_bore_d: float = 0.0     # computed: smallest bore this fits into
+
+    def apply_iso(self, code):
+        """Fill the insert fields from an ISO 1832 code (issue #14).
+
+        Returns True when the code parsed; False leaves the tool
+        untouched. Also refreshes nose_radius and the computed fields.
+        """
+        from . import inserts
+        p = inserts.parse_iso(code)
+        if p is None:
+            return False
+        self.iso_code = p["code"]
+        self.insert_shape = p["insert_shape"]
+        self.insert_ic = p["insert_ic"]
+        self.insert_thickness = p["insert_thickness"]
+        self.nose_radius = p["nose_radius"]
+        self.relief_angle = p["relief_angle"]
+        self.compute_geometry()
+        return True
+
+    def compute_geometry(self):
+        """Recompute outer_radius / approach_angle / min_bore_d from the
+        insert fields (no-op when no insert shape is set)."""
+        if not self.insert_shape:
+            return
+        from . import inserts
+        self.outer_radius = inserts.outer_radius(
+            self.insert_shape, self.insert_ic, self.nose_radius,
+            self.lead_angle)
+        self.approach_angle = inserts.approach_angle(
+            self.insert_shape, self.lead_angle)
+        if self.kind == "bore" and self.bar_diameter > 0:
+            self.min_bore_d = inserts.min_bore_d(self.bar_diameter,
+                                                 self.outer_radius)
+        else:
+            self.min_bore_d = 0.0
 
     @staticmethod
     def default_library() -> List["Tool"]:

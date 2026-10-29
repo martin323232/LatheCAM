@@ -14,6 +14,7 @@ from FreeCAD import Vector
 
 from .paths import generate
 from .program import load_tools
+from .inserts import bore_fit_warning
 from .objects import collect_program
 
 # kind -> (RGB, DrawStyle)
@@ -38,6 +39,7 @@ def tool_motions_for_document(doc):
     tools = load_tools(str(getattr(setup, "ToolLibraryFile", "")).strip() or None)
     stock = setup.Proxy.to_stock()
     out = []
+    warned = set()
     for o in ops:
         op = o.Proxy.to_op()
         tool = tools.get(op.tool)
@@ -45,6 +47,12 @@ def tool_motions_for_document(doc):
             raise ValueError(f"tool {op.tool!r} not in library")
         boring = (op.type.startswith("id_")
                   or (op.type == "thread" and getattr(op, "thread_inside", False)))
+        if boring:  # issue #14: bar+insert envelope must fit the bore
+            w = bore_fit_warning(tool, stock.bore_diameter)
+            if w and w not in warned:
+                warned.add(w)
+                if hasattr(App, "Console"):
+                    App.Console.PrintWarning("LatheCAM: " + w + "\n")
         out.append((o.Label, boring, tool, generate(op, tool, stock)))
     return stock, out
 

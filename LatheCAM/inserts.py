@@ -57,11 +57,12 @@ RE_MM = {"00": 0.0, "01": 0.1, "02": 0.2, "04": 0.4, "06": 0.6, "08": 0.8,
 RELIEF = {"N": 0.0, "A": 3.0, "B": 5.0, "C": 7.0, "D": 15.0, "E": 20.0,
           "F": 25.0, "G": 30.0, "H": 17.5, "P": 11.0, "R": 27.5}
 
-# tolerance letter (3rd char) — informational only
-TOLERANCE = {"J": 0.013, "K": 0.025, "M": 0.013, "N": 0.025, "U": 0.025,
-             "G": 0.05, "H": 0.025}
 
-_CODE_RE = re.compile(r"^([A-Z])([A-Z])([A-Z0-9]{2})([A-Z0-9]{2})([A-Z0-9]{2})")
+# ISO 1832 full form: shape, relief, tolerance, chipbreaker, IC, thickness,
+# nose radius (e.g. CCMT 06 02 08). IC is always numeric; thickness and
+# nose radius may carry letter codes (CCMT09T304).
+_CODE_RE = re.compile(
+    r"^([A-Z])([A-Z])([A-Z])([A-Z])([0-9]{2})([A-Z0-9]{2})([A-Z0-9]{2})")
 
 
 def _invert(table):
@@ -84,7 +85,8 @@ def parse_iso(code):
 
     Returns None when the code is not recognised (unknown shape letter or
     unknown IC/thickness/nose-radius code). The dict carries the raw
-    ``code`` so callers can round-trip the exact spelling.
+    ``code`` and every letter so callers can round-trip the exact
+    spelling through iso_code().
     """
     if not code:
         return None
@@ -92,7 +94,7 @@ def parse_iso(code):
     m = _CODE_RE.match(v)
     if not m:
         return None
-    shape, relief_l, ic_c, thk_c, re_c = m.groups()
+    shape, relief_l, tol_l, cb_l, ic_c, thk_c, re_c = m.groups()
     if shape not in SHAPES:
         return None
     if ic_c not in IC_MM or thk_c not in THK_MM or re_c not in RE_MM:
@@ -100,32 +102,40 @@ def parse_iso(code):
     n, tip, f, rel_default, name = SHAPES[shape]
     relief = RELIEF.get(relief_l, rel_default)
     return {
-        "code": v[:8],
+        "code": v[:10],
         "insert_shape": shape,
+        "relief_letter": relief_l,
+        "tol_letter": tol_l,
+        "cb_letter": cb_l,
+        "ic_code": ic_c,
+        "thk_code": thk_c,
+        "re_code": re_c,
         "shape_name": name,
         "tip_angle": tip,
         "circ_factor": f,
-        "relief_letter": relief_l,
         "relief_angle": relief,
-        "tolerance": TOLERANCE.get(m.group(2) if False else relief_l, None),
         "insert_ic": IC_MM[ic_c],
         "insert_thickness": THK_MM[thk_c],
         "nose_radius": RE_MM[re_c],
     }
 
 
-def iso_code(shape, ic, thickness, nose_radius):
-    """Rebuild the 8-char code from geometry (round-trips parse_iso).
+def iso_code(shape, relief_letter, tol_letter, cb_letter, ic, thickness,
+             nose_radius, ic_code=None, thk_code=None, re_code=None):
+    """Rebuild the 10-char code from geometry (round-trips parse_iso).
 
-    Codes are the canonical spelling of the tables, so
-    ``iso_code(**parse_iso(c)) == c`` for every code the parser accepts.
+    Numeric codes are the canonical spelling of the tables; pass the
+    parse result's ic_code/thk_code/re_code to preserve letter codes
+    like TCMT16E304 exactly.
     """
-    ic_c = _IC_CODE.get(round(ic, 2))
-    thk_c = _THK_CODE.get(round(thickness, 2))
-    re_c = _RE_CODE.get(round(nose_radius, 2))
-    if shape not in SHAPES or ic_c is None or thk_c is None or re_c is None:
+    ic_c = ic_code or _IC_CODE.get(round(ic, 2))
+    thk_c = thk_code or _THK_CODE.get(round(thickness, 2))
+    re_c = re_code or _RE_CODE.get(round(nose_radius, 2))
+    if (shape not in SHAPES or ic_c is None or thk_c is None
+            or re_c is None):
         return None
-    return f"{shape}M{ic_c}{thk_c}{re_c}"
+    return (f"{shape}{relief_letter or 'M'}{tol_letter or 'M'}"
+            f"{cb_letter or 'T'}{ic_c}{thk_c}{re_c}")
 
 
 def insert_polygon(shape, ic, lead_angle=0.0, n_round=24):

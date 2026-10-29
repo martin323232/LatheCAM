@@ -1,8 +1,11 @@
 """LatheCAM GUI commands (only imported when FreeCADGui is up)."""
 
+import math
 import os
 from contextlib import contextmanager
 from datetime import datetime
+
+from PySide import QtCore, QtGui, QtWidgets  # safe: this module needs the GUI
 
 import FreeCAD
 import FreeCADGui as Gui
@@ -234,6 +237,13 @@ class CmdPost:
                        and getattr(o, "OpType", "") in PROFILE_OPS
                        and not str(getattr(o, "ProfileString", "") or "").strip()]
             msg = f"Wrote {n} lines to\n{path}"
+            warns = [ln[2:].strip() for ln in gcode.splitlines()
+                     if ln.startswith("; WARNING:")]
+            if warns:
+                extra = ("\u26a0 Post-time warnings:\n  "
+                         + "\n  ".join(warns))
+                FreeCAD.Console.PrintWarning("LatheCAM: " + extra + "\n")
+                msg += "\n\n" + extra
             if missing:
                 extra = ("\u26a0 Ops without a profile cut straight "
                          "cylinders \u2014 if that is wrong, assign faces/"
@@ -1179,6 +1189,119 @@ def _op_panel_set_picking(on):
                    "are added to the list." if on else "\u2014")
 
 
+def _op_panel_current_op():
+    """The op the panel currently shows, or None (doc closed / op deleted)."""
+    panel = _OP_PANEL
+    if not panel or panel.get("op_name") is None:
+        return None
+    doc = panel.get("doc")
+    if not _doc_alive(doc):
+        return None
+    op = doc.getObject(panel["op_name"])
+    if op is None:
+        _op_panel_reset()
+    return op
+
+
+def _tool_geo_text(tool):
+    """One-line geometry readout for the panel (issue #17)."""
+    if tool is None:
+        return ""
+    if tool.kind == "bore":
+        bits = [f"bar \u00d8{tool.bar_diameter:g}"] if tool.bar_diameter else []
+        if tool.bar_overhang:
+            bits.append(f"\u00d7{tool.bar_overhang:g}")
+        bits.append(f"R{tool.nose_radius:g}")
+        return " \u00b7 ".join(bits)
+    if tool.kind == "thread":
+        return f"P{tool.thread_pitch:g} \u00b7 w{tool.width:g}"
+    if tool.kind in ("part", "groove"):
+        return f"w{tool.width:g} \u00b7 R{tool.nose_radius:g} \u00b7 z:{tool.z_reference}"
+    return f"R{tool.nose_radius:g}"
+
+
+def _op_panel_fill_tools(panel, op):
+    """Populate the tool combo for this op type (issue #17).
+
+    Tools whose kind matches the op sort first; the rest are dimmed but
+    selectable. A broken user library (duplicate T#) degrades to the
+    built-in library with a status warning instead of crashing.
+    """
+    from PySide import QtCore, QtGui
+    from .program import load_tools
+    from .model import Tool
+    from .objects import KIND_FOR_OP
+    sel = panel.get("tool")
+    if sel is None:
+        return
+    want = KIND_FOR_OP.get(getattr(op, "OpType", ""), "turn")
+    lib_err = ""
+    try:
+        tools = list(load_tools().values())
+    except ValueError as e:
+        lib_err = str(e)
+        tools = list(Tool.default_library())
+    tools.sort(key=lambda t: (t.kind != want, t.tool_number, t.name))
+    sel.blockSignals(True)
+    sel.clear()
+    cur = str(getattr(op, "ToolName", ""))
+    cur_idx = 0
+    for i, t in enumerate(tools):
+        sel.addItem(f"T{t.tool_number} {t.name}")
+        sel.setItemData(i, t.name, QtCore.Qt.UserRole)
+        if t.kind != want:
+            sel.setItemData(i, QtGui.QColor("#909090"),
+                            QtCore.Qt.ForegroundRole)
+        if t.name == cur:
+            cur_idx = i
+    # current tool missing from the library: keep it visible at the top
+    if cur and cur not in [t.name for t in tools]:
+        sel.insertItem(0, f"{cur} (not in library)")
+        sel.setItemData(0, cur, QtCore.Qt.UserRole)
+        sel.setItemData(0, QtGui.QColor("#b3261e"), QtCore.Qt.ForegroundRole)
+        cur_idx = 0
+    sel.setCurrentIndex(cur_idx)
+    sel.blockSignals(False)
+    geo = panel.get("tool_geo")
+    if geo is not None:
+        by_name = {t.name: t for t in tools}
+        geo.setText(_tool_geo_text(by_name.get(cur)))
+    if lib_err:
+        st = panel.get("status")
+        if st is not None:
+            st.setText(f"Tool library problem: {lib_err} \u2014 showing "
+                       "built-in tools only.")
+
+
+def _op_panel_tool_changed():
+    """User picked another tool: write op.ToolName (issue #17)."""
+    panel = _OP_PANEL
+    sel = panel.get("tool")
+    if sel is None or sel.currentIndex() < 0:
+        return
+    from PySide import QtCore
+    name = sel.itemData(sel.currentIndex(), QtCore.Qt.UserRole)
+    op = _op_panel_current_op()
+    if op is None or not name or str(op.ToolName) == str(name):
+        return
+    doc = op.Document
+    with _transaction(doc, f"Set tool {name}"):
+        op.ToolName = name
+    geo = panel.get("tool_geo")
+    if geo is not None:
+        try:
+            from .program import load_tools
+            geo.setText(_tool_geo_text(load_tools().get(name)))
+        except ValueError:
+            from .model import Tool
+            geo.setText(_tool_geo_text(
+                {t.name: t for t in Tool.default_library()}.get(name)))
+    st = panel.get("status")
+    if st is not None:
+        st.setText(f"Tool set to {name} \u2014 press Apply to op to "
+                   "regenerate the toolpath.")
+
+
 def _op_panel_show(panel, op):
     """Rebind the panel's widgets to another op (ends any pick mode)."""
     from PySide import QtCore, QtWidgets
@@ -1190,8 +1313,8 @@ def _op_panel_show(panel, op):
     head = panel.get("head")
     if head is not None:
         head.setText(f"<b>{op.Label}</b> &nbsp;\u00b7&nbsp; type "
-                     f"<b>{getattr(op, 'OpType', '')}</b> &nbsp;\u00b7&nbsp; "
-                     f"tool {getattr(op, 'ToolName', '')}")
+                     f"<b>{getattr(op, 'OpType', '')}</b>")
+    _op_panel_fill_tools(panel, op)
     prof = str(getattr(op, "ProfileString", "") or "")
     pre = panel.get("prof")
     if pre is not None:
@@ -1451,6 +1574,19 @@ def _open_op_panel(op):
     head.setTextFormat(QtCore.Qt.RichText)
     v.addWidget(head)
 
+    # Tool selector (issue #17): per-op tool choice, filtered by op type.
+    trow = QtWidgets.QHBoxLayout()
+    trow.addWidget(QtWidgets.QLabel("Tool:"))
+    tool_sel = QtWidgets.QComboBox()
+    tool_sel.setToolTip(
+        "Cutting tool for this operation. Tools that suit the op type are "
+        "listed first; others are dimmed but still selectable.")
+    trow.addWidget(tool_sel, 1)
+    tool_geo = QtWidgets.QLabel("")
+    tool_geo.setStyleSheet("color:#888;")
+    trow.addWidget(tool_geo)
+    v.addLayout(trow)
+
     warn = QtWidgets.QLabel(
         "No profile: this op cuts a straight cylinder. Pick the real "
         "faces/edges to make the tool follow the form.")
@@ -1498,7 +1634,12 @@ def _open_op_panel(op):
                       "head": head, "warn": warn, "prof": prof,
                       "list": lst, "pick": pick_btn, "rm": rm_btn,
                       "apply": apply_btn, "delete": del_btn,
-                      "status": status, "picking": False, "src_obj": None})
+                      "status": status, "picking": False, "src_obj": None,
+                      "tool": tool_sel, "tool_geo": tool_geo})
+
+    def on_tool(idx):
+        _op_panel_tool_changed()
+    tool_sel.currentIndexChanged.connect(on_tool)
 
     def on_pick():
         _op_panel_set_picking(not _OP_PANEL.get("picking"))
@@ -1640,6 +1781,23 @@ def make_op_command(op_type):
     return type(f"CmdOp_{op_type}", (CmdOp,), {"op_type": op_type})()
 
 
+# issue #14: insert-profile fields carried alongside the table rows
+_INS_KEYS = ("iso_code", "insert_shape", "insert_ic", "insert_thickness",
+             "outer_radius", "lead_angle", "approach_angle", "relief_angle",
+             "bar_diameter", "bar_overhang", "min_bore_d", "nose_radius")
+
+
+def _tool_profile(t):
+    """Insert-profile fields of a tool (or dummy row) as a JSON dict."""
+    if t is None:
+        return {}
+    out = {}
+    for k in _INS_KEYS:
+        v = getattr(t, k, "")
+        out[k] = v if isinstance(v, str) else float(v or 0)
+    return out
+
+
 _TOOL_COLS = [
     ("Name", "name", "str"),
     ("T#", "tool_number", "int"),
@@ -1655,6 +1813,446 @@ _TOOL_COLS = [
     ("Spindle", "spindle_dir", "dir"),
     ("Note", "note", "str"),
 ]
+
+
+class _ProfilePreview(QtWidgets.QWidget):
+    """Live insert preview (issue #14): top view for OD, hole cross-
+    section for boring — the mockup's right-hand panel."""
+
+    def __init__(self, editor, parent=None):
+        super().__init__(parent)
+        self.ed = editor
+        self.setFixedSize(340, 340)
+
+    def paintEvent(self, evt):  # noqa: N802 (Qt naming)
+        from PySide import QtGui
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        ed = self.ed
+        ed.refresh()
+        cx, cy = 170.0, 170.0
+        if ed.mode == "bore":
+            r_bar = ed.bar_d / 2.0
+            r_bore = ed.bore_d / 2.0 if ed.bore_d > 0 else 0.0
+            reach = max(r_bar + ed.outer_r, r_bore, 1.0)
+            sc = 140.0 / reach
+            p.setPen(QtGui.QPen(QtGui.QColor(0x5b, 0x70, 0x83), 2))
+            p.setBrush(QtGui.QColor(0xdb, 0xe4, 0xec))
+            if r_bore > 0:
+                p.drawEllipse(QtCore.QPointF(cx, cy), r_bore * sc,
+                               r_bore * sc)
+            p.setBrush(QtGui.QColor(0x9f, 0xb2, 0xc4))
+            p.drawEllipse(QtCore.QPointF(cx, cy), r_bar * sc, r_bar * sc)
+            # insert sits on the bar: nose at +radial (up), body hangs down
+            poly = [QtCore.QPointF(cx - y * sc, cy - (r_bar + x * sc) * sc)
+                    for x, y in ed.polygon]
+            p.setBrush(QtGui.QColor(0xe8, 0xa3, 0x3d))
+            p.setPen(QtGui.QPen(QtGui.QColor(0x7a, 0x4d, 0x0f), 2))
+            p.drawPolygon(QtGui.QPolygonF(poly))
+            rr = (r_bar + ed.outer_r) * sc
+            pen = QtGui.QPen(QtGui.QColor(0xb3, 0x26, 0x1e), 1.5)
+            pen.setDashPattern([4, 3])
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawEllipse(QtCore.QPointF(cx, cy), rr, rr)
+            fits = ed.bore_d <= 0 or ed.min_bore_d <= ed.bore_d + 1e-9
+            p.setPen(QtGui.QColor(0x2e, 0x7d, 0x32) if fits
+                     else QtGui.QColor(0xb3, 0x26, 0x1e))
+            p.drawText(QtCore.QRectF(0, 4, 340, 16), QtCore.Qt.AlignHCenter,
+                       f"min bore \u00d8{ed.min_bore_d:.1f} mm"
+                       + ("" if ed.bore_d <= 0 else
+                          (f" \u2014 fits \u00d8{ed.bore_d:g}"
+                           if fits else f" \u2014 DOES NOT FIT \u00d8{ed.bore_d:g}")))
+            p.setPen(QtGui.QColor(0x55, 0x55, 0x55))
+            p.drawText(QtCore.QRectF(0, 322, 340, 16), QtCore.Qt.AlignHCenter,
+                       f"bar \u00d8{ed.bar_d:g} mm \u00b7 overhang "
+                       f"{ed.overhang:g} mm \u00b7 current bore "
+                       f"\u00d8{ed.bore_d:g} mm")
+        else:
+            rw = 15.0  # preview stock \u00d830, like the mockup
+            reach = rw + ed.outer_r
+            sc = 140.0 / reach
+            p.setPen(QtGui.QPen(QtGui.QColor(0x5b, 0x70, 0x83), 2))
+            p.setBrush(QtGui.QColor(0xdb, 0xe4, 0xec))
+            p.drawEllipse(QtCore.QPointF(cx, cy), rw * sc, rw * sc)
+            rr = (rw + ed.outer_r) * sc
+            pen = QtGui.QPen(QtGui.QColor(0xb3, 0x26, 0x1e), 1.5)
+            pen.setDashPattern([4, 3])
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawEllipse(QtCore.QPointF(cx, cy), rr, rr)
+            poly = [QtCore.QPointF(cx + (rw + x) * sc, cy - y * sc)
+                    for x, y in ed.polygon]
+            p.setBrush(QtGui.QColor(0xe8, 0xa3, 0x3d))
+            p.setPen(QtGui.QPen(QtGui.QColor(0x7a, 0x4d, 0x0f), 2))
+            p.drawPolygon(QtGui.QPolygonF(poly))
+            if ed.re > 0:
+                nose = min(ed.polygon, key=lambda q: q[0])
+                p.setBrush(QtGui.QColor(0xff, 0xff, 0xff))
+                p.setPen(QtGui.QPen(QtGui.QColor(0xb3, 0x26, 0x1e), 1.5))
+                p.drawEllipse(QtCore.QPointF(cx + (rw + nose[0]) * sc,
+                                             cy - nose[1] * sc),
+                              max(ed.re * sc, 2.0), max(ed.re * sc, 2.0))
+            p.setPen(QtGui.QColor(0x55, 0x55, 0x55))
+            p.drawText(QtCore.QRectF(0, 322, 340, 16), QtCore.Qt.AlignHCenter,
+                       f"stock \u00d8{rw * 2:g} \u00b7 sweep \u00d8"
+                       f"{(rw + ed.outer_r) * 2:.1f} \u00b7 "
+                       f"\u03bb{ed.lead:+g}\u00b0 \u00b7 "
+                       f"\u03ba{ed.approach:g}\u00b7 relief "
+                       f"{ed.relief:g}\u00b0")
+        p.end()
+
+
+class ProfileEditorDialog(QtWidgets.QDialog):
+    """Tool Profile editor (issue #14): ISO quick-fill, shape gallery,
+    dimension selects, lead-angle slider, live preview. OK exposes the
+    resulting Tool insert fields via fields()."""
+
+    def __init__(self, tool, parent=None):
+        super().__init__(parent)
+        from PySide import QtCore
+        from . import inserts
+        self.inserts = inserts
+        self.setWindowTitle(f"Tool Profile \u2014 T{tool.tool_number} \u00b7 "
+                            f"{tool.name}")
+        self.mode = "bore" if tool.kind == "bore" else "od"
+        self.letters = None          # (relief, tol, cb) from the last parse
+        self.codes = {}              # ic/thk/re codes from the last parse
+        self.shape = tool.insert_shape or ""
+        self.ic = tool.insert_ic or 6.35
+        self.thk = tool.insert_thickness or 2.38
+        self.re = tool.nose_radius or 0.4
+        self.relief = tool.relief_angle or 7.0
+        self.lead = tool.lead_angle or 0.0
+        self.bar_d = tool.bar_diameter or 10.0
+        self.overhang = tool.bar_overhang or 40.0
+        self.bore_d = 0.0
+        self.outer_r = 0.0
+        self.approach = 0.0
+        self.min_bore_d = 0.0
+        self.polygon = []
+        self._fields = None
+
+        lay = QtWidgets.QVBoxLayout(self)
+        row = QtWidgets.QHBoxLayout()
+        left = QtWidgets.QVBoxLayout()
+        lay.addLayout(row)
+        row.addLayout(left)
+        self.preview = _ProfilePreview(self)
+        row.addWidget(self.preview)
+
+        # ISO quick-fill
+        iso_box = QtWidgets.QGroupBox("ISO code (quick-fill)")
+        iv = QtWidgets.QVBoxLayout(iso_box)
+        ir = QtWidgets.QHBoxLayout()
+        iv.addLayout(ir)
+        self.iso_edit = QtWidgets.QLineEdit(tool.iso_code or "")
+        self.iso_edit.setPlaceholderText("CCMT060208")
+        self.iso_edit.returnPressed.connect(self._on_parse)
+        b_parse = QtWidgets.QPushButton("Parse")
+        b_parse.clicked.connect(self._on_parse)
+        ir.addWidget(self.iso_edit)
+        ir.addWidget(b_parse)
+        self.anatomy = QtWidgets.QLabel("")
+        iv.addWidget(self.anatomy)
+        left.addWidget(iso_box)
+
+        # shape gallery
+        gal_box = QtWidgets.QGroupBox("Insert shape")
+        grid = QtWidgets.QGridLayout(gal_box)
+        self._shape_btns = {}
+        for i, letter in enumerate(inserts.SHAPES):
+            b = QtWidgets.QToolButton()
+            b.setIcon(self._glyph(letter))
+            b.setIconSize(QtCore.QSize(40, 30))
+            b.setToolTip(inserts.SHAPES[letter][4])
+            b.setCheckable(True)
+            b.setChecked(letter == self.shape)
+            b.clicked.connect(lambda _=False, L=letter: self._pick_shape(L))
+            grid.addWidget(b, i // 4, i % 4)
+            self._shape_btns[letter] = b
+        left.addWidget(gal_box)
+
+        # dimensions
+        dim_box = QtWidgets.QGroupBox("Insert dimensions (mm)")
+        dv = QtWidgets.QVBoxLayout(dim_box)
+        self.ic_combo = self._dim_select(dv, "Inscribed \u00d8 (IC)",
+                                         inserts.IC_MM, self.ic)
+        self.thk_combo = self._dim_select(dv, "Thickness",
+                                          inserts.THK_MM, self.thk)
+        self.re_combo = self._dim_select(dv, "Nose R", inserts.RE_MM, self.re)
+        self.out_label = QtWidgets.QLabel("")
+        dv.addWidget(self.out_label)
+        left.addWidget(dim_box)
+
+        # angles
+        ang_box = QtWidgets.QGroupBox("Angles")
+        av = QtWidgets.QVBoxLayout(ang_box)
+        lr = QtWidgets.QHBoxLayout()
+        self.lead_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.lead_slider.setRange(-15, 95)
+        self.lead_slider.setValue(int(round(self.lead)))
+        self.lead_val = QtWidgets.QLabel(f"{self.lead:g}\u00b0")
+        self.lead_slider.valueChanged.connect(self._on_lead)
+        lr.addWidget(QtWidgets.QLabel("Side cutting edge \u03bb\u209b"))
+        lr.addWidget(self.lead_slider)
+        lr.addWidget(self.lead_val)
+        av.addLayout(lr)
+        self.appr_label = QtWidgets.QLabel("")
+        self.relief_label = QtWidgets.QLabel("")
+        av.addWidget(self.appr_label)
+        av.addWidget(self.relief_label)
+        left.addWidget(ang_box)
+
+        # boring bar
+        bore_box = QtWidgets.QGroupBox("Boring bar")
+        bv = QtWidgets.QVBoxLayout(bore_box)
+        self.bar_edit = QtWidgets.QLineEdit(f"{self.bar_d:g}")
+        self.ovh_edit = QtWidgets.QLineEdit(f"{self.overhang:g}")
+        self.bore_edit = QtWidgets.QLineEdit("")
+        self.minbore_label = QtWidgets.QLabel("")
+        for lbl, w in (("Bar \u00d8 (mm)", self.bar_edit),
+                       ("Overhang (mm)", self.ovh_edit),
+                       ("Current bore \u00d8 (mm)", self.bore_edit)):
+            r = QtWidgets.QHBoxLayout()
+            r.addWidget(QtWidgets.QLabel(lbl))
+            r.addWidget(w)
+            bv.addLayout(r)
+            w.textChanged.connect(self._on_text)
+        bv.addWidget(self.minbore_label)
+        self.bore_box = bore_box
+        bore_box.setVisible(self.mode == "bore")
+        left.addWidget(bore_box)
+        left.addStretch(1)
+
+        bb = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=self)
+        bb.accepted.connect(self._on_ok)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+        if tool.iso_code:
+            p = inserts.parse_iso(tool.iso_code)
+            if p:
+                self.letters = (p["relief_letter"], p["tol_letter"],
+                                p["cb_letter"])
+                self.codes = {"ic_code": p["ic_code"],
+                              "thk_code": p["thk_code"],
+                              "re_code": p["re_code"]}
+                self._show_anatomy(p["code"])
+        self.refresh()
+
+    # ---- widget helpers -----------------------------------------------
+
+    @staticmethod
+    def _glyph(letter):
+        """Small shape polygon icon for the gallery (drawn, no assets)."""
+        from PySide import QtGui, QtCore
+        from . import inserts
+        pm = QtGui.QPixmap(40, 30)
+        pm.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(pm)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        n, _tip, _f, _rel, _name = inserts.SHAPES[letter]
+        p.setBrush(QtGui.QColor(0xcf, 0xd8, 0xdc))
+        p.setPen(QtGui.QPen(QtGui.QColor(0x45, 0x5a, 0x64), 2))
+        if n == 0:
+            p.drawEllipse(QtCore.QRectF(8, 3, 24, 24))
+        else:
+            pts = [QtCore.QPointF(20 + 11 * math.cos(-math.pi / 2
+                                                     + i * 2 * math.pi / n),
+                                  15 + 11 * math.sin(-math.pi / 2
+                                                     + i * 2 * math.pi / n))
+                   for i in range(n)]
+            p.drawPolygon(QtGui.QPolygonF(pts))
+        p.end()
+        return QtGui.QIcon(pm)
+
+    def _dim_select(self, layout, label, table, current):
+        r = QtWidgets.QHBoxLayout()
+        r.addWidget(QtWidgets.QLabel(label))
+        cb = QtWidgets.QComboBox()
+        best = None
+        for code, mm in table.items():
+            cb.addItem(f"{code} \u2192 {mm:g} mm", mm)
+            if abs(mm - current) < 1e-6:
+                best = cb.count() - 1
+        cb.setCurrentIndex(best if best is not None else -1)
+        cb.currentIndexChanged.connect(self._on_dim)
+        r.addWidget(cb)
+        r.addStretch(1)
+        layout.addLayout(r)
+        return cb
+
+    @staticmethod
+    def _combo_mm(cb):
+        try:
+            v = cb.currentData()
+            return float(v.toDouble()[0]) if v is not None else 0.0
+        except AttributeError:
+            return float(v) if v is not None else 0.0
+
+    # ---- state sync ----------------------------------------------------
+
+    def refresh(self):
+        """Recompute derived values + labels from the control state."""
+        from . import inserts
+        self.bar_d = self._f(self.bar_edit, 10.0)
+        self.overhang = self._f(self.ovh_edit, 0.0)
+        self.bore_d = self._f(self.bore_edit, 0.0)
+        if self.shape:
+            self.polygon = inserts.insert_polygon(self.shape, self.ic,
+                                                  self.lead)
+            self.outer_r = inserts.outer_radius(self.shape, self.ic,
+                                                self.re, self.lead)
+            self.approach = inserts.approach_angle(self.shape, self.lead)
+        else:
+            self.polygon, self.outer_r, self.approach = [], 0.0, 0.0
+        self.min_bore_d = (inserts.min_bore_d(self.bar_d, self.outer_r)
+                           if self.mode == "bore" and self.bar_d > 0
+                           and self.shape else 0.0)
+        self.out_label.setText(f"Outer radius (max): "
+                               f"\u00d8{self.outer_r * 2:.2f} mm beyond nose")
+        self.appr_label.setText(f"Approach \u03ba\u1d63: "
+                                f"{self.approach:g}\u00b0 (computed)")
+        self.relief_label.setText(f"Relief: {self.relief:g}\u00b0 "
+                                  f"(from ISO letter)")
+        self.minbore_label.setText(
+            f"Min bore \u00d8: {self.min_bore_d:.1f} mm \u2014 the bar must "
+            f"fit the hole!")
+        self.update()
+
+    def _f(self, edit, default):
+        try:
+            return float(edit.text())
+        except (TypeError, ValueError):
+            return default
+
+    def _on_parse(self):
+        if not self.parse_iso(self.iso_edit.text()):
+            QtWidgets.QMessageBox.warning(
+                self, "Unknown code",
+                "Not a recognised ISO 1832 code (try CCMT060208, "
+                "DCMT070204, VCMT110304)")
+
+    def parse_iso(self, code):
+        """Parse an ISO code into the controls. Public: the offscreen
+        harness drives the editor through this. Returns True on success."""
+        p = self.inserts.parse_iso(code)
+        if p is None:
+            return False
+        self.shape = p["insert_shape"]
+        self.ic = p["insert_ic"]
+        self.thk = p["insert_thickness"]
+        self.re = p["nose_radius"]
+        self.relief = p["relief_angle"]
+        self.letters = (p["relief_letter"], p["tol_letter"], p["cb_letter"])
+        self.codes = {"ic_code": p["ic_code"], "thk_code": p["thk_code"],
+                      "re_code": p["re_code"]}
+        self.iso_edit.setText(p["code"])
+        self._show_anatomy(p["code"])
+        self._sync_combos()
+        self._sync_gallery()
+        self.refresh()
+        return True
+
+    def _show_anatomy(self, code):
+        self.anatomy.setTextFormat(QtCore.Qt.RichText)
+        cols = ["#b3261e", "#c77700", "#1565c0", "#6a1b9a", "#2e7d32"]
+        spans = [code[:1], code[1:2], code[2:4], code[4:6], code[6:8]]
+        self.anatomy.setText(
+            "".join(f'<span style="color:{c};font-size:16pt">{s}</span>'
+                    for c, s in zip(cols, spans))
+            + '<span style="color:#666"> \u00b7 shape/relief/tol/CB '
+              '\u00b7 IC/thk/nose-R</span>')
+
+    def _sync_combos(self):
+        for cb, val in ((self.ic_combo, self.ic), (self.thk_combo, self.thk),
+                        (self.re_combo, self.re)):
+            for i in range(cb.count()):
+                try:
+                    mm = float(cb.itemData(i).toDouble()[0])
+                except AttributeError:
+                    mm = float(cb.itemData(i))
+                if abs(mm - val) < 1e-6:
+                    cb.blockSignals(True)
+                    cb.setCurrentIndex(i)
+                    cb.blockSignals(False)
+                    break
+
+    def _sync_gallery(self):
+        for letter, b in self._shape_btns.items():
+            b.blockSignals(True)
+            b.setChecked(letter == self.shape)
+            b.blockSignals(False)
+
+    def _pick_shape(self, letter):
+        self.shape = letter
+        self.relief = self.inserts.SHAPES[letter][3]
+        self._sync_gallery()
+        self._regen_code()
+        self.refresh()
+
+    def _on_lead(self, val):
+        self.lead = float(val)
+        self.lead_val.setText(f"{self.lead:g}\u00b0")
+        self.refresh()
+
+    def _on_dim(self):
+        self.ic = self._combo_mm(self.ic_combo)
+        self.thk = self._combo_mm(self.thk_combo)
+        self.re = self._combo_mm(self.re_combo)
+        # keep the code letters the user just picked (e.g. E3, not 03)
+        self.codes = {"ic_code": self.ic_combo.currentText().split(" ")[0],
+                      "thk_code": self.thk_combo.currentText().split(" ")[0],
+                      "re_code": self.re_combo.currentText().split(" ")[0]}
+        self._regen_code()
+        self.refresh()
+
+    def _on_text(self):
+        self.refresh()
+
+    def _regen_code(self):
+        """Keep the ISO code in step with shape/dimension edits."""
+        if not self.shape or self.letters is None:
+            return
+        code = self.inserts.iso_code(self.shape, self.letters[0],
+                                     self.letters[1], self.letters[2],
+                                     self.ic, self.thk, self.re,
+                                     **self.codes)
+        if code:
+            self.iso_edit.blockSignals(True)
+            self.iso_edit.setText(code)
+            self.iso_edit.blockSignals(False)
+            self._show_anatomy(code)
+
+    # ---- result ---------------------------------------------------------
+
+    def fields(self):
+        """The insert fields this dialog produced (empty when no shape)."""
+        self.refresh()
+        if not self.shape:
+            return {"iso_code": "", "insert_shape": "", "insert_ic": 0.0,
+                    "insert_thickness": 0.0, "outer_radius": 0.0,
+                    "lead_angle": 0.0, "approach_angle": 0.0,
+                    "relief_angle": 0.0, "bar_diameter": 0.0,
+                    "bar_overhang": 0.0, "min_bore_d": 0.0}
+        return {"iso_code": self.iso_edit.text().strip().upper(),
+                "insert_shape": self.shape,
+                "insert_ic": self.ic, "insert_thickness": self.thk,
+                "nose_radius": self.re,
+                "outer_radius": self.outer_r,
+                "lead_angle": self.lead,
+                "approach_angle": self.approach,
+                "relief_angle": self.relief,
+                "bar_diameter": self.bar_d if self.mode == "bore" else 0.0,
+                "bar_overhang": self.overhang if self.mode == "bore" else 0.0,
+                "min_bore_d": self.min_bore_d}
+
+    def _on_ok(self):
+        self._fields = self.fields()
+        self.accept()
 
 
 class CmdToolLibrary:
@@ -1704,6 +2302,35 @@ class CmdToolLibrary:
                     if kind == "int":
                         it.setData(QtCore.Qt.DisplayRole, str(int(float(val or 0))))
                     tbl.setItem(row, col, it)
+            # issue #14: carry the insert-profile fields on the Name cell
+            # (survives row add/remove) as JSON in UserRole
+            it = tbl.item(row, 0)
+            if it is not None:
+                it.setData(QtCore.Qt.UserRole, json.dumps(_tool_profile(t)))
+
+        def read_row(r):
+            """Current table values of row r as a tool dict (no profile)."""
+            rec = {}
+            for col, (_hdr, attr, kind) in enumerate(_TOOL_COLS):
+                if kind in ("kind", "zref", "dir"):
+                    rec[attr] = tbl.cellWidget(r, col).currentText()
+                else:
+                    txt = (tbl.item(r, col).text() if tbl.item(r, col) else "").strip()
+                    if kind == "int":
+                        rec[attr] = int(float(txt or 0))
+                    elif kind == "float":
+                        rec[attr] = float(txt or 0)
+                    else:
+                        rec[attr] = txt
+            return rec
+
+        def read_profile(r):
+            it = tbl.item(r, 0)
+            raw = it.data(QtCore.Qt.UserRole) if it is not None else None
+            try:
+                return json.loads(str(raw)) if raw else {}
+            except ValueError:
+                return {}
 
         for r, t in enumerate(tools):
             fill(r, t)
@@ -1724,8 +2351,31 @@ class CmdToolLibrary:
             if r >= 0:
                 tbl.removeRow(r)
 
+        def edit_profile():
+            """Open the Tool Profile editor (issue #14) for the selected row."""
+            from .model import Tool
+            r = tbl.currentRow()
+            if r < 0:
+                QtWidgets.QMessageBox.information(
+                    dlg, "Tool profile", "Select a tool row first.")
+                return
+            rec = read_row(r)
+            rec.update(read_profile(r))
+            fields = Tool.__dataclass_fields__
+            tool = Tool(**{k: v for k, v in rec.items() if k in fields})
+            d = ProfileEditorDialog(tool, dlg)
+            if d.exec_() != QtWidgets.QDialog.Accepted:
+                return
+            prof = d.fields()
+            tbl.item(r, 0).setData(QtCore.Qt.UserRole, json.dumps(prof))
+            # reflect the parsed nose radius in its table column
+            nr = tbl.item(r, 4)
+            if nr is not None and prof.get("nose_radius"):
+                nr.setText(f"{prof['nose_radius']:g}")
+
         btns = QtWidgets.QHBoxLayout()
-        for label, fn in (("Add tool", add_row), ("Remove selected", del_row)):
+        for label, fn in (("Add tool", add_row), ("Remove selected", del_row),
+                          ("Profile\u2026", edit_profile)):
             b = QtWidgets.QPushButton(label, dlg)
             b.clicked.connect(fn)
             btns.addWidget(b)
@@ -1751,20 +2401,12 @@ class CmdToolLibrary:
 
         out = []
         for r in range(tbl.rowCount()):
-            rec = {}
-            for col, (_hdr, attr, kind) in enumerate(_TOOL_COLS):
-                if kind in ("kind", "zref", "dir"):
-                    rec[attr] = tbl.cellWidget(r, col).currentText()
-                else:
-                    txt = (tbl.item(r, col).text() if tbl.item(r, col) else "").strip()
-                    if kind == "int":
-                        rec[attr] = int(float(txt or 0))
-                    elif kind == "float":
-                        rec[attr] = float(txt or 0)
-                    else:
-                        rec[attr] = txt
+            rec = read_row(r)
+            prof = read_profile(r)
             if not rec["name"]:
                 continue
+            if prof.get("insert_shape") or prof.get("iso_code"):
+                rec.update(prof)
             out.append(rec)
         nums = [t["tool_number"] for t in out]
         if len(nums) != len(set(nums)):

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List
 
 from .model import Tool
+from .inserts import bore_fit_warning
 from .paths import generate, CollisionChecker
 from .post import Block, post_program
 
@@ -117,7 +118,8 @@ def post_document(doc, filename: str = None) -> str:
     """Post the whole document. Returns gcode text; writes file if filename given.
 
     Raises ValueError if any rapid move passes through remaining material —
-    fix the ops before posting.
+    fix the ops before posting. Boring tools whose insert/bar envelope does
+    not fit the current bore add a ``! WARNING:`` comment line (issue #14).
     """
     from .objects import collect_program
     setup, ops = collect_program(doc)
@@ -128,6 +130,15 @@ def post_document(doc, filename: str = None) -> str:
     tools = load_tools(str(getattr(setup, "ToolLibraryFile", "")).strip() or None)
     blocks = build_blocks(setup, ops, tools)
     stock = _stock_for(setup, ops)
+    # issue #14: boring safety — warn when the bar+insert envelope cannot
+    # fit the current bore (post-time, before any G-code is written)
+    warnings = []
+    for o in ops:
+        op = o.Proxy.to_op()
+        if op.type.startswith("id_"):
+            w = bore_fit_warning(tools.get(op.tool), stock.bore_diameter)
+            if w and w not in warnings:
+                warnings.append(w)
     nose_comp = bool(getattr(setup, "NoseComp", False))
     checker = CollisionChecker(stock)
     for b in blocks:
@@ -153,6 +164,7 @@ def post_document(doc, filename: str = None) -> str:
         cycle_output=bool(getattr(setup, "CycleOutput", False)),
         cycle_output_p=int(getattr(setup, "CycleOutputP", 1) or 1),
         nose_comp=nose_comp,
+        warnings=warnings,
     )
     if filename:
         with open(filename, "w", encoding="utf-8") as f:
